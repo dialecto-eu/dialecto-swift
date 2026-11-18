@@ -63,6 +63,11 @@ public enum DialectoLive {
         return fallback
     }
 
+    /// Goes up each time a release or a debug draft lands. A SwiftUI body that reads it is built again
+    /// then, as `Text(live:)` is, so text the app looks up itself (`NSLocalizedString`, its own helper)
+    /// redraws too.
+    @MainActor public static var revision: Int { LiveStore.shared.revision }
+
     /// For the debug-only product, which needs the `Bundle.main` hook without a release channel.
     package static func installBundleHook() { BundleHook.install() }
 

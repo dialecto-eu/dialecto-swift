@@ -42,7 +42,9 @@ struct LiveClientTests {
         let runtime = harness.launch(publicKeys: [publicText])
 
         #expect(text("export.button", "Export") == "Export")
+        let before = DialectoLive.revision
         #expect(await runtime.client.check() == .applied)
+        #expect(DialectoLive.revision > before)
         #expect(text("export.button", "Export") == "Exportieren")
         #expect(text("library.summary", "%1$@ holds %2$lld scenes") == "%2$lld Szenen in %1$@")
         // Plural, device and not-to-translate keys are not in the release: the app's text stays.

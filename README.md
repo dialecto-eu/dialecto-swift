@@ -72,6 +72,17 @@ The last row does not go through `Bundle.localizedString`; it keeps the text bun
 `Text(live:)` or `DialectoLive.string` for the strings you want to fix live. This was checked by running
 each path against a release in the demo (see Develop).
 
+A SwiftUI body that looks text up itself, through `NSLocalizedString` or the app's own helper, redraws when a
+release lands only if it reads `DialectoLive.revision` while it builds. A helper can read it once for all its
+callers:
+
+```swift
+func L(_ key: String) -> String {
+    if Thread.isMainThread { _ = MainActor.assumeIsolated { DialectoLive.revision } }
+    return NSLocalizedString(key, comment: "")
+}
+```
+
 The `Bundle.main` hook is installed once by `start` (a second `start` leaves it alone) and answers only the
 main bundle and only the tables the release carries. A table `T` reads the catalog named `T`, or a catalog in
 a folder whose path ends in `T` (`App/Localizable.xcstrings` is `Localizable`). `nil` is `Localizable`.
