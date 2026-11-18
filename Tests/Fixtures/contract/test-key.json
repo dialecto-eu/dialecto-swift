@@ -1,0 +1,6 @@
+{
+  "test_only": true,
+  "warning": "TEST-ONLY key pair, published in the repo. Never use it for anything real.",
+  "public": "ed25519:WUUcxamXh5oOj1LQ94xit5bdIsI5qQfJqio8E3nBea4",
+  "secret": "ZGlhbGVjdG8tdGVzdC1vbmx5LWtleS1zZWVkLTAwMDE"
+}
