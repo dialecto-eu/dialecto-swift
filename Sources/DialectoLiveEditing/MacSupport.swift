@@ -318,13 +318,16 @@
 
         // MARK: Menu
 
-        /// SwiftUI builds the main menu after launch and may rebuild it, so the item is put back whenever the
-        /// app becomes active.
+        /// SwiftUI builds the main menu after launch and rebuilds it whenever the app's commands change, either
+        /// as a new menu or by clearing the old one, so the item is put back each time.
         func installMenu() {
             installKeys()
             ensureMenu()
             let center = NotificationCenter.default
-            for name in [NSApplication.didFinishLaunchingNotification, NSApplication.didBecomeActiveNotification] {
+            for name in [
+                NSApplication.didFinishLaunchingNotification, NSApplication.didBecomeActiveNotification,
+                NSApplication.didUpdateNotification,
+            ] {
                 center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.ensureMenu() }
                 }
@@ -337,9 +340,18 @@
             }
         }
 
+        /// An item can sit in one menu only, and adding it to a second one raises, so it leaves a replaced
+        /// main menu before it joins the new one.
         private func ensureMenu() {
             guard let main = NSApp.mainMenu, item.menu !== main else { return }
+            item.menu?.removeItem(item)
             main.addItem(item)
+        }
+
+        /// ⌃⌥⌘E, matched here as well as on the menu item, so Edit text works while the menu is being rebuilt.
+        static func isEditShortcut(_ event: NSEvent) -> Bool {
+            event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.command, .option, .control]
+                && event.charactersIgnoringModifiers?.lowercased() == "e"
         }
 
         func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -516,6 +528,10 @@
         }
 
         private func key(_ event: NSEvent) -> Bool {
+            if Self.isEditShortcut(event) {
+                toggleEdit()
+                return true
+            }
             let escape = event.keyCode == 53
             if let editor {
                 guard event.window === editor.panel || runtime.editState.isOn else { return false }
