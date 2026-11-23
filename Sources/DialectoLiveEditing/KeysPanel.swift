@@ -57,6 +57,8 @@
         private(set) var matchedText: String?
         /// The text of the last click that found no key.
         private(set) var noKeyText: String?
+        /// A line the panel shows until it is dismissed: a key the catalog lacks, a sign-in needed.
+        private(set) var notice: String?
 
         private let log: LookupLog
         private let layer: DraftLayer
@@ -140,6 +142,7 @@
         func noKey(for text: String?) {
             let text = text.map(ReverseLookup.normalize) ?? ""
             noKeyText = text.count > 40 ? String(text.prefix(39)) + "\u{2026}" : text
+            notice = nil
         }
 
         func clearMatches() {
@@ -147,7 +150,12 @@
             matchedText = nil
         }
 
-        func clearNote() { noKeyText = nil }
+        func notify(_ text: String) { notice = text }
+
+        func clearNote() {
+            noKeyText = nil
+            notice = nil
+        }
 
         var visible: [PanelRow] {
             var rows = rows
@@ -190,7 +198,8 @@
                     if !session.isSignedIn { SignInCard(session: session) }
                     toolbar
                     if let text = model.matchedText { matchesBanner(text) }
-                    if let text = model.noKeyText { noKeyNote(text) }
+                    if let text = model.noKeyText { noteRow(text.isEmpty ? "No text there" : "No key for \u{201C}\(text)\u{201D}") }
+                    if let text = model.notice { noteRow(text) }
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
@@ -299,10 +308,10 @@
             .background(RoundedRectangle(cornerRadius: 7).fill(Coastal.infoBackground))
         }
 
-        private func noKeyNote(_ text: String) -> some View {
+        private func noteRow(_ text: String) -> some View {
             HStack(spacing: 8) {
                 Image(systemName: "info.circle").foregroundStyle(Coastal.mut)
-                Text(text.isEmpty ? "No text there" : "No key for \u{201C}\(text)\u{201D}").lineLimit(1)
+                Text(text).lineLimit(1)
                 Spacer(minLength: 8)
                 Button {
                     model.clearNote()

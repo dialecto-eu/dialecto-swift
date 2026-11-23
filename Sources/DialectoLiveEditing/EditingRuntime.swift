@@ -74,26 +74,38 @@
 
         // MARK: Picking text
 
-        /// The editor on a key: the project's catalog filtered to it. Without the project's id (not signed
-        /// in yet), the project list.
-        func editorURL(key: String) -> URL {
-            guard let id = session.projectID, var components = URLComponents(url: server, resolvingAgainstBaseURL: false)
-            else { return server.appendingPathComponent("repos") }
-            components.path = "/repos/\(id)/catalog"
-            components.queryItems = [URLQueryItem(name: "search", value: key)]
-            return components.url ?? server
+        /// The editor on a key: the project's catalog with that entry's editor open, focused on its text
+        /// (`?key=` is an exact key). Without the project's id (not signed in yet), nil.
+        static func editorURL(server: URL, projectID: String?, key: String) -> URL? {
+            guard let projectID, var components = URLComponents(url: server, resolvingAgainstBaseURL: false)
+            else { return nil }
+            components.path = "/repos/\(projectID)/catalog"
+            components.queryItems = key.isEmpty ? nil : [URLQueryItem(name: "key", value: key)]
+            return components.url
         }
 
-        func openEditor(key: String) { Self.open(editorURL(key: key)) }
+        /// The editor on a key. A key the catalog doesn't have is said so in the panel; so is the need to
+        /// sign in, since the project is not known before.
+        func openEditor(key: String) {
+            Task { @MainActor in
+                let check = await session.check(key: key)
+                if check == .missing {
+                    model.notify("No key \u{201C}\(key)\u{201D} in the catalog")
+                    showPanel()
+                } else if let url = Self.editorURL(server: server, projectID: session.projectID, key: key) {
+                    Self.open(url)
+                } else {
+                    model.notify("Sign in to open the editor")
+                    showPanel()
+                }
+            }
+        }
 
         /// The project's catalog in Dialecto.
         func openProject() {
-            var url = editorURL(key: "")
-            if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-                components.queryItems = nil
-                url = components.url ?? url
-            }
-            Self.open(url)
+            Self.open(
+                Self.editorURL(server: server, projectID: session.projectID, key: "")
+                    ?? server.appendingPathComponent("repos"))
         }
 
         /// The keys a piece of on-screen text could be, for the hover outline.
@@ -109,7 +121,12 @@
 
         /// A click on `text`: one key opens the editor and ends Edit text; several open the panel on them.
         /// Text that is not Dialecto's leaves the mode on and only notes it in the panel.
-        func pick(text: String?) {
+        ///
+        /// A view's tooltip (its help text) is a second candidate: the visible text first, the tooltip when
+        /// that has no key, and the tooltip first when `preferTooltip` (Option held).
+        func pick(text: String?, tooltip: String? = nil, preferTooltip: Bool = false) {
+            let candidates = preferTooltip ? [tooltip, text] : [text, tooltip]
+            let text = candidates.first { !keys(for: $0).isEmpty } ?? text ?? tooltip
             let found = keys(for: text)
             if found.isEmpty {
                 model.noKey(for: text)

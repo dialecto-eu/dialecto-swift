@@ -26,11 +26,17 @@
 
     /// One answer of the token poll.
     enum TokenPoll: Sendable, Equatable {
-        case token(String, expiresIn: Int)
+        case token(String, expiresIn: Int, projectID: String?)
         case pending
         case slowDown
         case expired
         case denied
+    }
+
+    /// What `GET /api/live/native/entry` answers.
+    struct EntryLookup: Sendable, Equatable {
+        var found: Bool
+        var projectID: String?
     }
 
     /// One row of the drafts feed: a text to show, or the reason the server could not show it.
@@ -85,7 +91,9 @@
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             if status == 200 {
                 guard let token = object?["access_token"] as? String else { throw NativeError.malformed }
-                return .token(token, expiresIn: object?["expires_in"] as? Int ?? 8 * 3600)
+                return .token(
+                    token, expiresIn: object?["expires_in"] as? Int ?? 8 * 3600,
+                    projectID: object?["project_id"] as? String)
             }
             guard status == 400 else { throw NativeError.unexpected(status: status) }
             switch object?["error"] as? String {
@@ -94,6 +102,19 @@
             case "expired_token": return .expired
             case "access_denied": return .denied
             default: throw NativeError.malformed
+            }
+        }
+
+        /// Whether the project's catalog has `key`, and the project's id when the server says it.
+        func entry(token: String, key: String) async throws -> EntryLookup {
+            let (status, data, _) = try await send(
+                path: "api/live/native/entry", method: "GET", query: [URLQueryItem(name: "key", value: key)],
+                bearer: token)
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            switch status {
+            case 200: return EntryLookup(found: true, projectID: object?["project_id"] as? String)
+            case 404: return EntryLookup(found: false, projectID: object?["project_id"] as? String)
+            default: throw NativeError.unexpected(status: status)
             }
         }
 

@@ -150,8 +150,15 @@ no Keychain prompt appears. Xcode previews never sign in; they use a token alrea
   windows with an "Editing text · esc" badge, the pointer turns to a hand, and the text under it gets an
   outline with its key. On iOS the floating button turns sea and reads Editing text, and a frame goes round
   the screen.
-  A click on Dialecto's text opens its key; a click on other text adds a short note to the panel and keeps
-  the mode on. Esc, or the same control, turns it off.
+  A click on Dialecto's text opens Dialecto on that exact key, with its editor open on the source text; a key
+  the catalog doesn't have is said so in the panel; a click on other text adds a short note to the panel and
+  keeps the mode on. Esc, or the same control, turns it off.
+
+  On a Mac the frame goes round every window the app shows: sheets, alerts, popovers, panels, and windows
+  opened while Edit text is on. A system tooltip is drawn by macOS outside the app's windows and vanishes on
+  a click, so it can't be clicked; a view's help text (`.help(...)` in SwiftUI, `toolTip` in AppKit) is read
+  from the view instead. A click on a view whose own text has no key opens its tooltip's key, the outline
+  reads "Tooltip: key", and Option-click picks the tooltip first.
 
   A Mac app, sandboxed or not, needs no permission. iOS reads the app's accessibility tree, which iOS builds
   only when accessibility is on. In the simulator:

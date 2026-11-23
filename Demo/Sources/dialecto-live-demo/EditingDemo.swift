@@ -20,8 +20,13 @@
 //   appearance light|dark the app's appearance
 //   frames                print the demo window's and the keys panel's frames, top-left origin, for screencapture -R
 //   shown                 print what each string shows
+//   ax <view>             print the accessibility chain at a view's center (role, label, value, help)
+//   open sheet|popover|alert|panel   open one more window over the demo's (a sheet, a popover, an alert
+//                         sheet, a floating panel), each with a string of its own; `close` closes them
 //   quit
-// Views: title, export, greeting, summary, library, plain (text that is not Dialecto's).
+// Views: title, export, gear (a button with a tooltip and no text), greeting, summary, library, plain
+// (text that is not Dialecto's). `click`, `hover`, `pick` and `capture` also take @sheet, @popover, @alert
+// and @panel: the center of that window, or all of it.
 
 import AppKit
 import DialectoLive
@@ -71,6 +76,14 @@ import SwiftUI
                     Text(live: "export.button", default: "Export")
                 }
                 .reported("export")
+                // An icon with a tooltip and no text of its own: the tooltip is the string Edit text reaches.
+                Button {
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .help(DialectoLive.string("gear.help", default: "Open the settings"))
+                .accessibilityLabel(Text(verbatim: ""))
+                .reported("gear")
                 Text(verbatim: Shown.summary()[2].1).reported("greeting")
                 Text(verbatim: Shown.summary()[3].1).reported("summary")
                 Text(verbatim: Shown.summary()[4].1).reported("library")
@@ -87,6 +100,8 @@ import SwiftUI
     enum EditingDemo {
         static var frames: [String: CGRect] = [:]
         private static var window: NSWindow?
+        private static var extras: [String: NSWindow] = [:]
+        private static var popover: NSPopover?
         private static var out: URL?
         private static var lastShown = ""
         private static var lastStatus = ""
@@ -218,7 +233,8 @@ import SwiftUI
                 guard let out, let target = parts.dropFirst().first else { return }
                 let shown =
                     target == "panel"
-                    ? NSApp.windows.first { $0.isVisible && $0.title == "Dialecto Keys" } : window
+                    ? NSApp.windows.first { $0.isVisible && $0.title == "Dialecto Keys" }
+                    : target.hasPrefix("@") ? extras[String(target.dropFirst())] : window
                 guard let shown else { say("NO WINDOW \(line)"); return }
                 let file = out.appendingPathComponent("\(target).png")
                 say(capture(shown, to: file) ? "WROTE \(file.path)" : "NO CAPTURE \(line)")
@@ -231,10 +247,14 @@ import SwiftUI
                     )
                 }
             case "click", "pick", "hover":
-                guard let id = parts.dropFirst().first, let frame = frames[id], let window
+                guard let id = parts.dropFirst().first, let target = id.hasPrefix("@") ? extras[String(id.dropFirst())] : window,
+                    let frame = id.hasPrefix("@") ? CGRect(x: 0, y: 0, width: target.frame.width, height: target.frame.height) : frames[id]
                 else { say("NO VIEW \(line)"); return }
+                let window = target
                 // SwiftUI's global space starts at the top of the whole window, titlebar included.
-                let inWindow = NSPoint(x: frame.midX, y: window.frame.height - frame.midY)
+                var inWindow = NSPoint(x: frame.midX, y: window.frame.height - frame.midY)
+                // @windows: the middle of the content below the titlebar, where their one string is.
+                if id.hasPrefix("@") { inWindow.y = window.contentLayoutRect.midY }
                 if name == "pick" {
                     let screen = window.convertPoint(toScreen: inWindow)
                     DialectoLiveEditing.pickText(atScreenPoint: screen.x, screen.y)
@@ -245,9 +265,81 @@ import SwiftUI
                 {
                     NSApp.postEvent(event, atStart: false)
                 }
+            case "ax":
+                guard let id = parts.dropFirst().first, let frame = frames[id], let window else { return }
+                let screen = window.convertPoint(toScreen: NSPoint(x: frame.midX, y: window.frame.height - frame.midY))
+                var node = NSApp.accessibilityHitTest(screen) as AnyObject?
+                var depth = 0
+                while let current = node, depth < 8 {
+                    let fields = ["accessibilityRole", "accessibilityLabel", "accessibilityTitle", "accessibilityValue", "accessibilityHelp"]
+                        .map { name -> String in
+                            let value = current.responds(to: Selector(name)) ? current.perform(Selector(name))?.takeUnretainedValue() : nil
+                            return "\(name.dropFirst(13))=\(value.map { "\($0)" } ?? "-")"
+                        }
+                    say("AX \(depth) \(fields.joined(separator: " "))")
+                    node = current.responds(to: Selector("accessibilityParent")) ? current.perform(Selector("accessibilityParent"))?.takeUnretainedValue() : nil
+                    depth += 1
+                }
+            case "open": openExtra(parts.dropFirst().first ?? "")
+            case "close": closeExtras()
             case "quit": exit(0)
             default: say("UNKNOWN \(line)")
             }
+        }
+
+        private static func extraContent(_ text: String, _ key: String) -> NSView {
+            let view = NSHostingView(
+                rootView: Text(live: key, default: text).font(.title3).padding(24).fixedSize())
+            view.frame.size = view.fittingSize
+            return view
+        }
+
+        private static func openExtra(_ kind: String) {
+            guard let window else { return }
+            switch kind {
+            case "sheet":
+                let sheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+                sheet.contentView = extraContent("Rename this scene", "sheet.title")
+                window.beginSheet(sheet)
+                extras["sheet"] = sheet
+            case "popover":
+                let shown = NSPopover()
+                shown.behavior = .applicationDefined
+                let controller = NSViewController()
+                controller.view = extraContent("Scenes in your library", "popover.title")
+                shown.contentViewController = controller
+                if let content = window.contentView {
+                    shown.show(relativeTo: NSRect(x: content.bounds.midX, y: content.bounds.maxY - 40, width: 1, height: 1), of: content, preferredEdge: .minY)
+                }
+                popover = shown
+                extras["popover"] = shown.contentViewController?.view.window
+            case "alert":
+                let alert = NSAlert()
+                alert.messageText = DialectoLive.string("alert.title", default: "Delete this scene?")
+                alert.informativeText = DialectoLive.string("alert.body", default: "This cannot be undone.")
+                alert.addButton(withTitle: DialectoLive.string("alert.ok", default: "Delete"))
+                alert.beginSheetModal(for: window)
+                extras["alert"] = window.attachedSheet
+            case "panel":
+                let panel = NSPanel(
+                    contentRect: .zero, styleMask: [.titled, .utilityWindow, .closable], backing: .buffered, defer: false)
+                panel.title = "Inspector"
+                panel.isFloatingPanel = true
+                panel.contentView = extraContent("Scene details", "panel.title")
+                panel.setFrameTopLeftPoint(NSPoint(x: window.frame.maxX + 20, y: window.frame.maxY))
+                panel.orderFront(nil)
+                extras["panel"] = panel
+            default: say("UNKNOWN open \(kind)")
+            }
+        }
+
+        private static func closeExtras() {
+            for (_, extra) in extras {
+                if let sheet = window?.attachedSheet, sheet === extra { window?.endSheet(sheet) } else { extra.close() }
+            }
+            popover?.close()
+            popover = nil
+            extras = [:]
         }
 
         private static func windowImage(_ number: Int) -> NSImage? {

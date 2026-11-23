@@ -43,6 +43,7 @@
         private let openURL: @MainActor (URL) -> Void
         private let now: @Sendable () -> Date
         private var task: Task<Void, Never>?
+        private var token: String?
         /// Called when the drafts or the session changed, so the panel rebuilds.
         var onDraftsChanged: (() -> Void)?
 
@@ -77,6 +78,7 @@
         func resume() {
             guard task == nil, let held = store.load(project: project) else { return }
             projectID = held.projectID
+            token = held.token
             state = .signedIn
             task = Task { await feedLoop(token: held.token) }
         }
@@ -98,6 +100,7 @@
             task?.cancel()
             task = nil
             store.forget(project: project)
+            token = nil
             layer.clear()
             draftCount = 0
             offline = false
@@ -105,6 +108,22 @@
             note = nil
             LiveStore.shared.bump()
             onDraftsChanged?()
+        }
+
+        /// What the project's catalog says about `key`; `.unknown` when signed out or Dialecto can't be
+        /// reached. Learns the project's id on the way, for a session held from before it was kept.
+        enum KeyCheck: Equatable { case found, missing, unknown }
+
+        func check(key: String) async -> KeyCheck {
+            guard isSignedIn, let token else { return .unknown }
+            guard let answer = try? await client.entry(token: token, key: key) else { return .unknown }
+            if projectID == nil, let learned = answer.projectID {
+                projectID = learned
+                store.save(
+                    StoredSession(token: token, expiresAt: store.load(project: project)?.expiresAt ?? now().addingTimeInterval(3600), projectID: learned),
+                    project: project)
+            }
+            return answer.found ? .found : .missing
         }
 
         /// Waits for the work in flight, for tests.
@@ -136,12 +155,13 @@
                 }
                 do {
                     switch try await client.pollToken(deviceCode: grant.deviceCode) {
-                    case .token(let token, let expiresIn):
-                        projectID = grant.projectID
+                    case .token(let token, let expiresIn, let granted):
+                        projectID = granted ?? grant.projectID
                         let held = StoredSession(
                             token: token, expiresAt: now().addingTimeInterval(TimeInterval(expiresIn)),
-                            projectID: grant.projectID)
+                            projectID: projectID)
                         store.save(held, project: project)
+                        self.token = token
                         state = .signedIn
                         await feedLoop(token: token)
                         return
@@ -206,6 +226,7 @@
 
         private func end(_ message: String) {
             store.forget(project: project)
+            token = nil
             layer.clear()
             draftCount = 0
             LiveStore.shared.bump()

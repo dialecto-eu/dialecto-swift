@@ -11,18 +11,22 @@
         struct Hit {
             var text: String
             var frame: NSRect?
+            /// The view's tooltip (its accessibility help), when it has one. With no visible text, the
+            /// tooltip is the text.
+            var tooltip: String?
         }
 
         @MainActor
-        static func text(at point: NSPoint) -> String? { hit(at: point)?.text }
+        static func text(at point: NSPoint, in windows: [NSWindow]) -> String? { hit(at: point, in: windows)?.text }
 
+        /// `windows` are the ones Edit text covers, so the hit test and the frames agree.
         @MainActor
-        static func hit(at point: NSPoint) -> Hit? {
+        static func hit(at point: NSPoint, in windows: [NSWindow]) -> Hit? {
             if let hit = read(at: point) { return hit }
             // The hit can land on the hosting view itself: look through the window's nodes for the smallest
             // one with text whose frame holds the point.
             var best: (area: Double, hit: Hit)?
-            for window in NSApp.windows where window.isVisible && window.frame.contains(point) && !(window is EditFrameWindow) {
+            for window in windows where window.frame.contains(point) {
                 search(window as AnyObject, point: point, depth: 0, best: &best)
             }
             return best?.hit
@@ -31,12 +35,16 @@
         private static func search(_ node: AnyObject, point: NSPoint, depth: Int, best: inout (area: Double, hit: Hit)?) {
             guard depth < 12 else { return }
             if depth > 0, let rect = frame(of: node), rect.contains(point),
-                let text = ["accessibilityValue", "accessibilityLabel", "accessibilityTitle"].lazy
-                    .compactMap({ string(node, $0) }).first(where: { !$0.isEmpty }),
                 string(node, "accessibilityRole") != "AXWindow"
             {
-                let area = Double(rect.width * rect.height)
-                if best == nil || area < best!.area { best = (area, Hit(text: text, frame: rect)) }
+                let tooltip = string(node, "accessibilityHelp").flatMap { $0.isEmpty ? nil : $0 }
+                let visible = ["accessibilityValue", "accessibilityLabel", "accessibilityTitle"].lazy
+                    .compactMap({ string(node, $0) }).first(where: { !$0.isEmpty })
+                // A view with only a tooltip (an icon button) is its tooltip.
+                if let text = visible ?? tooltip {
+                    let area = Double(rect.width * rect.height)
+                    if best == nil || area < best!.area { best = (area, Hit(text: text, frame: rect, tooltip: tooltip)) }
+                }
             }
             for child in (object(node, "accessibilityChildren") as? [AnyObject]) ?? [] {
                 search(child, point: point, depth: depth + 1, best: &best)
@@ -52,17 +60,23 @@
         private static func read(at point: NSPoint) -> Hit? {
             var node = NSApp.accessibilityHitTest(point) as AnyObject?
             var up = 0
+            var tooltip: (text: String, frame: NSRect?)?
             while let current = node, up < 6 {
                 if let role = string(current, "accessibilityRole"), role == "AXWindow" || role == "AXApplication" {
-                    return nil
+                    break
+                }
+                if tooltip == nil, let help = string(current, "accessibilityHelp"), !help.isEmpty {
+                    tooltip = (help, frame(of: current))
                 }
                 for selector in ["accessibilityValue", "accessibilityLabel", "accessibilityTitle"] {
-                    if let text = string(current, selector), !text.isEmpty { return Hit(text: text, frame: frame(of: current)) }
+                    if let text = string(current, selector), !text.isEmpty {
+                        return Hit(text: text, frame: frame(of: current), tooltip: tooltip?.text)
+                    }
                 }
                 node = object(current, "accessibilityParent")
                 up += 1
             }
-            return nil
+            return tooltip.map { Hit(text: $0.text, frame: $0.frame, tooltip: $0.text) }
         }
 
         private static func object(_ node: AnyObject, _ name: String) -> AnyObject? {
@@ -87,6 +101,10 @@
         }
 
         var outline: Outline?
+        /// No badge: the window is small.
+        var compact = false
+
+        init(compact: Bool = false) { self.compact = compact }
     }
 
     /// A click-through window over an app window while Edit text is on: a sea frame, a badge and the hover
@@ -94,9 +112,12 @@
     final class EditFrameWindow: NSWindow {
         let state: EditFrameState
 
+        /// A window too small for the badge (a popover, an alert) gets the frame alone.
+        static func isCompact(_ parent: NSWindow) -> Bool { parent.frame.width < 300 || parent.frame.height < 160 }
+
         @MainActor
         init(over parent: NSWindow) {
-            state = EditFrameState()
+            state = EditFrameState(compact: Self.isCompact(parent))
             super.init(contentRect: parent.frame, styleMask: .borderless, backing: .buffered, defer: false)
             isOpaque = false
             backgroundColor = .clear
@@ -105,6 +126,7 @@
             isReleasedWhenClosed = false
             collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
             contentView = NSHostingView(rootView: EditFrameView(state: state))
+            if let panel = parent as? NSPanel, panel.isFloatingPanel { level = parent.level }
         }
 
         override var canBecomeKey: Bool { false }
@@ -120,15 +142,17 @@
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Coastal.sea, lineWidth: 3)
                 if let outline = state.outline { outlineView(outline) }
-                VStack {
-                    Spacer()
-                    HStack {
+                if !state.compact {
+                    VStack {
                         Spacer()
-                        badge
-                        Spacer()
+                        HStack {
+                            Spacer()
+                            badge
+                            Spacer()
+                        }
                     }
+                    .padding(.bottom, 12)
                 }
-                .padding(.bottom, 12)
             }
             .ignoresSafeArea()
         }
@@ -306,11 +330,36 @@
 
         // MARK: Edit text
 
-        private func appWindows() -> [NSWindow] {
-            NSApp.windows.filter { candidate in
-                candidate.isVisible && candidate !== window && !(candidate is EditFrameWindow) && !(candidate is NSPanel)
-                    && candidate.canBecomeMain && candidate.frame.width > 60
-            }
+        /// Classes of the windows the system draws for itself: menus, tooltips, the status bar, text input.
+        private static let systemWindowNames = ["Menu", "ToolTip", "Tooltip", "StatusBar", "TUINSWindow", "TextInput", "Dock", "NSCursor"]
+
+        /// Every visible window the app shows, but Dialecto's own panel and frames: the main windows, and
+        /// the sheets, alerts, popovers and panels the app opens. The click, the hover and the frames all
+        /// go by this one list.
+        func appWindows() -> [NSWindow] {
+            NSApp.windows.filter { isAppWindow($0) }
+        }
+
+        private func isAppWindow(_ candidate: NSWindow) -> Bool {
+            guard candidate.isVisible, candidate !== window, !(candidate is EditFrameWindow),
+                candidate.frame.width > 20, candidate.frame.height > 20
+            else { return false }
+            let name = NSStringFromClass(type(of: candidate))
+            return !Self.systemWindowNames.contains { name.contains($0) }
+        }
+
+        private func detach(_ id: ObjectIdentifier) {
+            guard let held = frames.removeValue(forKey: id) else { return }
+            held.parent.removeChildWindow(held.overlay)
+            held.overlay.orderOut(nil)
+            held.parent.acceptsMouseMovedEvents = held.movedEvents
+        }
+
+        /// Frames follow the windows: one on each that opened since, none on those that closed.
+        private func rescan() {
+            guard runtime.editState.isOn else { return }
+            for (id, held) in frames where !held.parent.isVisible { detach(id) }
+            for candidate in appWindows() where frames[ObjectIdentifier(candidate)] == nil { attachFrame(to: candidate) }
         }
 
         func setMonitoring(_ on: Bool) {
@@ -318,12 +367,7 @@
             monitors = []
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             observers = []
-            for (_, held) in frames {
-                held.parent.removeChildWindow(held.overlay)
-                held.overlay.orderOut(nil)
-                held.parent.acceptsMouseMovedEvents = held.movedEvents
-            }
-            frames = [:]
+            for id in Array(frames.keys) { detach(id) }
             if hovering {
                 NSCursor.arrow.set()
                 hovering = false
@@ -332,11 +376,19 @@
 
             for parent in appWindows() { attachFrame(to: parent) }
             let center = NotificationCenter.default
-            for name in [NSWindow.didResizeNotification, NSWindow.didBecomeKeyNotification] {
+            for name in [NSWindow.didResizeNotification, NSWindow.didBecomeKeyNotification, NSWindow.didExposeNotification] {
                 observers.append(
                     center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                         nonisolated(unsafe) let note = note
                         MainActor.assumeIsolated { self?.windowChanged(note.object as? NSWindow) }
+                    })
+            }
+            // A sheet, an alert or a popover opens, and closes, without the notices above: look again after
+            // every event the app handles.
+            for name in [NSApplication.didUpdateNotification, NSWindow.willCloseNotification] {
+                observers.append(
+                    center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                        MainActor.assumeIsolated { self?.rescan() }
                     })
             }
 
@@ -345,7 +397,9 @@
                 let consumed = MainActor.assumeIsolated { () -> Bool in
                     guard let self, let target = event.window, self.isAppWindow(target) else { return false }
                     // Cocoa screen space already (origin bottom left): do not flip it.
-                    self.runtime.pick(text: MacHitTest.text(at: target.convertPoint(toScreen: event.locationInWindow)))
+                    let hit = MacHitTest.hit(at: target.convertPoint(toScreen: event.locationInWindow), in: self.appWindows())
+                    self.runtime.pick(
+                        text: hit?.text, tooltip: hit?.tooltip, preferTooltip: event.modifierFlags.contains(.option))
                     return true
                 }
                 return consumed ? nil : event
@@ -372,10 +426,6 @@
             }
         }
 
-        private func isAppWindow(_ candidate: NSWindow) -> Bool {
-            frames[ObjectIdentifier(candidate)] != nil || appWindows().contains { $0 === candidate }
-        }
-
         private func attachFrame(to parent: NSWindow) {
             guard frames[ObjectIdentifier(parent)] == nil else { return }
             let overlay = EditFrameWindow(over: parent)
@@ -389,7 +439,7 @@
             guard runtime.editState.isOn, let changed, !(changed is EditFrameWindow) else { return }
             if let held = frames[ObjectIdentifier(changed)] {
                 held.overlay.setFrame(changed.frame, display: true)
-            } else if appWindows().contains(where: { $0 === changed }) {
+            } else if isAppWindow(changed) {
                 attachFrame(to: changed)
             }
         }
@@ -400,13 +450,16 @@
             var shown: (overlay: EditFrameWindow, outline: EditFrameState.Outline)?
             if event.type == .mouseMoved, let target, let parent = event.window {
                 let point = parent.convertPoint(toScreen: event.locationInWindow)
-                if let hit = MacHitTest.hit(at: point), let rect = hit.frame {
-                    let keys = runtime.keys(for: hit.text)
-                    let names = Array(Set(keys.map(\.key))).sorted()
+                if let hit = MacHitTest.hit(at: point, in: appWindows()), let rect = hit.frame {
+                    // The same choice a click makes: the text, else the tooltip; Option puts the tooltip first.
+                    let ordered = event.modifierFlags.contains(.option) ? [hit.tooltip, hit.text] : [hit.text, hit.tooltip]
+                    let chosen = ordered.first { !runtime.keys(for: $0).isEmpty } ?? nil
+                    let names = Array(Set(runtime.keys(for: chosen).map(\.key))).sorted()
                     if let first = names.first {
                         let frame = parent.frame
                         let local = CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
-                        shown = (target.overlay, .init(rect: local, label: names.count == 1 ? first : "\(names.count) keys"))
+                        let prefix = chosen != nil && chosen == hit.tooltip ? "Tooltip: " : ""
+                        shown = (target.overlay, .init(rect: local, label: prefix + (names.count == 1 ? first : "\(names.count) keys")))
                     }
                 }
             }
@@ -440,7 +493,8 @@
         func editModeChanged(_ on: Bool) { (platform as? MacSupport)?.setMonitoring(on) }
 
         func pickText(atScreenPoint x: Double, _ y: Double) {
-            pick(text: MacHitTest.text(at: NSPoint(x: x, y: y)))
+            let hit = (platform as? MacSupport).flatMap { MacHitTest.hit(at: NSPoint(x: x, y: y), in: $0.appWindows()) }
+            pick(text: hit?.text, tooltip: hit?.tooltip)
         }
 
         func snapshotPanel(to url: URL) -> Bool { (platform as? MacSupport)?.snapshot(to: url) ?? false }
