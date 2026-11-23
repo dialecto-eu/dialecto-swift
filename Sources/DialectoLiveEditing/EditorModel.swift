@@ -112,8 +112,7 @@
             if !session.isSignedIn {
                 phase = .signedOut
             } else if let cached = session.cachedEntries(key) {
-                apply(cached)
-                phase = .editing
+                phase = open(cached)
             }
         }
 
@@ -125,23 +124,22 @@
                 return
             }
             if let cached = session.cachedEntries(key) {
-                apply(cached)
-                phase = .editing
+                phase = open(cached)
+                guard phase == .editing else { return }
                 // The cache may be a little old: read it again, keeping whatever was typed.
                 if case .found(let fresh) = await session.fetchEntries(key), fresh != cached, !readOnly { apply(fresh) }
                 return
             }
             phase = .loading
             switch await session.fetchEntries(key) {
-            case .found(let entries):
-                apply(entries)
-                phase = .editing
+            case .found(let entries): phase = open(entries)
             case .notFound: phase = .missing
             case .ended: phase = .signedOut
             case .offline: phase = .failed(EditorWords.unreachable)
             case .rateLimited: phase = .failed(EditorWords.waitToRead)
             case .forbidden: phase = .failed(EditorWords.noAccess)
             case .unsupportedFormat: phase = .failed(DraftSession.Failure.notACatalog)
+            case .failed(let reason): phase = .failed(reason)
             }
         }
 
@@ -159,9 +157,17 @@
             await load()
         }
 
-        /// Fills the fields from an entries answer. A field already typed in keeps its text.
-        private func apply(_ entries: Entries) {
-            guard let block = entries.catalog(matching: catalog) else { return }
+        /// Fills the fields and says what the panel shows: the editor, or why there is none.
+        private func open(_ entries: Entries) -> Phase {
+            guard apply(entries) else { return .failed(EditorWords.noCatalog) }
+            return .editing
+        }
+
+        /// Fills the fields from an entries answer. A field already typed in keeps its text. False when the
+        /// answer holds no catalog block for the key.
+        @discardableResult
+        private func apply(_ entries: Entries) -> Bool {
+            guard let block = entries.catalog(matching: catalog) else { return false }
             catalog = block.catalog
             sourceLocale = entries.sourceLocale
             let order = entries.locales.isEmpty ? block.languages.map(\.locale) : entries.locales
@@ -178,6 +184,7 @@
                         reason: language.reason, outdated: language.outdated, hasDraft: language.draft != nil))
             }
             fields = next
+            return true
         }
 
         /// The source first, then the language the app shows, then the rest in the project's order.
@@ -199,6 +206,9 @@
 
         /// The languages folded under Other languages.
         var others: [Field] { fields.filter { !($0.isSource || isShown($0.locale) || promoted.contains($0.locale)) } }
+
+        /// The project lists only its source language, so there is nothing to fold under Other languages.
+        var hasNoOtherLanguages: Bool { !fields.isEmpty && fields.allSatisfy(\.isSource) }
 
         var isDirty: Bool { fields.contains { $0.isDirty } }
 
@@ -367,6 +377,8 @@
     enum EditorWords {
         static let unreachable = "Dialecto unreachable"
         static let waitToRead = "Wait a moment, then try again"
+        static let noCatalog = "Dialecto has no catalog for this key"
+        static let noOtherLanguages = "The project has no other languages: add them in its Settings"
         static let noAccess = "No edit access to this language"
 
         /// A 422, under the field. Placeholders name the ones missing or extra.

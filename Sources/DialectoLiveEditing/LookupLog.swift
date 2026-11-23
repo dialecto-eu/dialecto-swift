@@ -79,15 +79,43 @@
             }
             if !interpolated.isEmpty { return interpolated }
 
-            return entries.filter { entry in
+            let contained = entries.filter { entry in
                 let text = normalize(entry.text)
                 return text.count >= 2 && wanted.contains(text)
             }
+            return contained.filter { entry in standsAlone(normalize(entry.text), in: wanted, among: contained) }
         }
 
-        /// Collapses whitespace so a wrapped or padded label still matches.
+        /// A string found only inside a longer match is part of that string, not a second one: a label with an
+        /// icon after it ("Intense effects are off in calm mode Info") is one key, though "Intense" is in it.
+        /// A label that joins two strings ("Intense, Intense effects …") still finds both.
+        private static func standsAlone(_ text: String, in wanted: String, among matches: [LookupEntry]) -> Bool {
+            let longer = matches.map { normalize($0.text) }.filter { $0.count > text.count && $0.contains(text) }
+            guard !longer.isEmpty else { return true }
+            let covering = longer.flatMap { ranges(of: $0, in: wanted) }
+            return ranges(of: text, in: wanted).contains { range in
+                !covering.contains { $0.lowerBound <= range.lowerBound && range.upperBound <= $0.upperBound }
+            }
+        }
+
+        private static func ranges(of text: String, in wanted: String) -> [Range<String.Index>] {
+            var found: [Range<String.Index>] = []
+            var start = wanted.startIndex
+            while start < wanted.endIndex, let range = wanted.range(of: text, range: start..<wanted.endIndex) {
+                found.append(range)
+                start = wanted.index(after: range.lowerBound)
+            }
+            return found
+        }
+
+        /// Collapses whitespace so a wrapped or padded label still matches, and drops what an inline image or
+        /// SF Symbol adds to a label's text (the attachment character and private-use symbol glyphs).
         static func normalize(_ text: String) -> String {
-            text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            let kept = String.UnicodeScalarView(
+                text.unicodeScalars.filter { scalar in
+                    scalar != "\u{FFFC}" && scalar.properties.generalCategory != .privateUse
+                })
+            return String(kept).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         }
 
         private static let token = try! NSRegularExpression(

@@ -43,6 +43,41 @@
             #expect(found == ["export.button", "save"])
         }
 
+        @Test func aLabelAndTheSegmentBesideItAreTwoKeysNotOne() {
+            let log = LookupLog()
+            record(log, "calm.note", "Intense effects are off in calm mode")
+            record(log, "calm.segment.intense", "Intense")
+            #expect(log.reverse("Intense effects are off in calm mode").map(\.key) == ["calm.note"])
+            #expect(log.reverse("Intense").map(\.key) == ["calm.segment.intense"])
+            // A container label that joins both is the only text that finds both.
+            #expect(log.reverse("Intense, Intense effects are off in calm mode").map(\.key).sorted() == ["calm.note", "calm.segment.intense"])
+        }
+
+        @Test func aLabelWithAnIconAfterItIsOneKey() {
+            let log = LookupLog()
+            record(log, "calm.note", "Intense effects are off in calm mode")
+            record(log, "calm.segment.intense", "Intense")
+            // What SwiftUI reports for `Text(...) + Text(Image(systemName: "info.circle"))`, in its usual forms.
+            for shown in [
+                "Intense effects are off in calm mode \u{FFFC}",
+                "Intense effects are off in calm mode \u{100184}",
+                "Intense effects are off in calm mode Info",
+                "Intense effects are off in calm mode, info.circle",
+            ] {
+                #expect(log.reverse(shown).map(\.key) == ["calm.note"], "\(shown)")
+            }
+        }
+
+        @Test func aStringSeenOutsideTheLongerOneIsStillItsOwnKey() {
+            let log = LookupLog()
+            record(log, "calm.note", "Intense effects are off in calm mode")
+            record(log, "calm.segment.intense", "Intense")
+            record(log, "calm.segment.calm", "Calm")
+            #expect(
+                log.reverse("Intense Calm Intense effects are off in calm mode Info").map(\.key).sorted()
+                    == ["calm.note", "calm.segment.calm", "calm.segment.intense"])
+        }
+
         @Test func exactBeatsPatternBeatsSubstring() {
             let log = log()
             // "Speichern" is both an exact entry and inside "Änderungen speichern" case-insensitively? No: exact wins alone.
@@ -101,4 +136,29 @@
             #expect(rows.map(\.skipped) == [nil, "empty"])
         }
     }
+    #if canImport(AppKit) && !targetEnvironment(macCatalyst)
+        import AppKit
+
+        struct MacHitRefineTests {
+            private let note = MacHitTest.Hit(
+                text: "Intense effects are off in calm mode", frame: NSRect(x: 0, y: 0, width: 200, height: 20))
+            private let group = MacHitTest.Hit(
+                text: "Intense, Intense effects are off in calm mode", frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+
+            @Test func aGroupLabelGivesWayToTheTextUnderThePointer() {
+                let hit = MacHitTest.refined(group, by: note, at: NSPoint(x: 10, y: 10))
+                #expect(hit?.text == "Intense effects are off in calm mode")
+            }
+
+            @Test func aReadWhoseFrameMissesThePointerGivesWayToo() {
+                let segment = MacHitTest.Hit(text: "Intense", frame: NSRect(x: 0, y: 30, width: 200, height: 20))
+                let hit = MacHitTest.refined(segment, by: note, at: NSPoint(x: 10, y: 10))
+                #expect(hit?.text == "Intense effects are off in calm mode")
+            }
+
+            @Test func aReadThatIsAlreadyTheSmallestStays() {
+                #expect(MacHitTest.refined(note, by: group, at: NSPoint(x: 10, y: 10))?.text == note.text)
+            }
+        }
+    #endif
 #endif

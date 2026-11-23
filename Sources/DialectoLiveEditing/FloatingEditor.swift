@@ -218,6 +218,14 @@
                             .padding(.top, index == 0 ? 0 : 12)
                     }
                     if !model.others.isEmpty { others }
+                    if model.hasNoOtherLanguages {
+                        Text(EditorWords.noOtherLanguages)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Coastal.mut)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 12)
+                            .accessibilityIdentifier("no-other-languages")
+                    }
                     if let banner = model.banner { bannerView(banner).padding(.top, 10) }
                 }
                 .padding(12)

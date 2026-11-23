@@ -22,14 +22,27 @@
         /// `windows` are the ones Edit text covers, so the hit test and the frames agree.
         @MainActor
         static func hit(at point: NSPoint, in windows: [NSWindow]) -> Hit? {
-            if let hit = read(at: point) { return hit }
-            // The hit can land on the hosting view itself: look through the window's nodes for the smallest
-            // one with text whose frame holds the point.
+            // The hit can land on the hosting view itself, or on a group that joins its children's labels:
+            // look through the window's nodes for the smallest one with text whose frame holds the point.
             var best: (area: Double, hit: Hit)?
             for window in windows where window.frame.contains(point) {
                 search(window as AnyObject, point: point, depth: 0, best: &best)
             }
-            return best?.hit
+            return refined(read(at: point), by: best?.hit, at: point)
+        }
+
+        /// The walk up from the hit node can stop on a container whose label joins its children's
+        /// (`Intense, Intense effects are off in calm mode`). The smaller node inside it whose text is part of
+        /// that label is the text the pointer is over; so is any node under the pointer when the read one
+        /// is a neighbour's, its frame missing the pointer.
+        static func refined(_ read: Hit?, by inner: Hit?, at point: NSPoint) -> Hit? {
+            guard let read else { return inner }
+            if let frame = read.frame, !frame.contains(point), let inner { return inner }
+            guard let inner, let outer = read.frame, let rect = inner.frame, inner.text != read.text,
+                outer.contains(rect), rect.width * rect.height < outer.width * outer.height,
+                read.text.contains(inner.text)
+            else { return read }
+            return Hit(text: inner.text, frame: rect, tooltip: inner.tooltip ?? read.tooltip)
         }
 
         private static func search(_ node: AnyObject, point: NSPoint, depth: Int, best: inout (area: Double, hit: Hit)?) {

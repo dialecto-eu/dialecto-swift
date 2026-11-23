@@ -159,7 +159,11 @@
             if let running = inFlight[key] { return await running.value }
             let client = client
             let running = Task { () -> EntriesOutcome in
-                do { return try await client.entries(token: token, key: key) } catch { return .offline }
+                do { return try await client.entries(token: token, key: key) } catch NativeError.unexpected(let status) {
+                    return .failed("Dialecto answered \(status)")
+                } catch NativeError.malformed {
+                    return .failed("Dialecto's answer was not readable")
+                } catch { return .offline }
             }
             inFlight[key] = running
             let outcome = await running.value

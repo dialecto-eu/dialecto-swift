@@ -31,10 +31,13 @@
 
         /// A signed-in session whose feed has nothing new, and an editor on `export.button` with its entries
         /// already read. The app shows `language`.
-        private func open(language: String = "de", edits: [StubReply] = []) async -> Setup {
+        private func open(
+            language: String = "de", edits: [StubReply] = [],
+            entries: StubReply = .json(200, NativeEditsClientTests.entriesBody)
+        ) async -> Setup {
             let stub = StubServer([
                 "GET /api/live/native/drafts": [.json(304, "")],
-                Self.entriesRoute: [.json(200, NativeEditsClientTests.entriesBody)],
+                Self.entriesRoute: [entries],
                 Self.editsRoute: edits,
             ])
             let store = TokenStore(backend: MemoryBackend())
@@ -223,6 +226,52 @@
             #expect(model.phase == .editing)
             #expect(model.key == Self.key)
             setup.session.signOut()
+        }
+
+        private static let sevenLanguages = """
+            {"key":"export.button","source_locale":"en","locales":["en","de","fr","es","it","pt","ja"],
+             "catalogs":[{"catalog":"app-localizable","languages":[
+               {"locale":"en","text":"Export","outdated":false,"editable":true,"draft":null},
+               {"locale":"de","text":"Exportieren","outdated":false,"editable":false,"draft":null,"reason":"no_permission"},
+               {"locale":"fr","text":"Exporter","outdated":false,"editable":false,"draft":null,"reason":"no_permission"},
+               {"locale":"es","text":"Exportar","outdated":false,"editable":false,"draft":null,"reason":"no_permission"},
+               {"locale":"it","text":"Esporta","outdated":false,"editable":false,"draft":null,"reason":"no_permission"},
+               {"locale":"pt","text":"Exportar","outdated":false,"editable":false,"draft":null,"reason":"no_permission"},
+               {"locale":"ja","text":"","outdated":false,"editable":false,"draft":null,"reason":"no_permission"}]}]}
+            """
+
+        @Test func anAnswerWithSixOtherLanguagesFoldsThemUnderOtherLanguages() async {
+            let setup = await open(language: "en", entries: .json(200, Self.sevenLanguages))
+            #expect(setup.model.phase == .editing)
+            #expect(setup.model.primary.map(\.locale) == ["en"])
+            #expect(setup.model.others.map(\.locale) == ["de", "fr", "es", "it", "pt", "ja"])
+            #expect(!setup.model.hasNoOtherLanguages)
+            setup.session.signOut()
+        }
+
+        @Test func aProjectWithOnlyItsSourceLanguageSaysSo() async {
+            let body = """
+                {"key":"export.button","source_locale":"en","locales":["en"],
+                 "catalogs":[{"catalog":"app-localizable","languages":[
+                   {"locale":"en","text":"Export","outdated":false,"editable":true,"draft":null}]}]}
+                """
+            let setup = await open(language: "en", entries: .json(200, body))
+            #expect(setup.model.others.isEmpty)
+            #expect(setup.model.hasNoOtherLanguages)
+            setup.session.signOut()
+        }
+
+        @Test func aFailedEntriesCallShowsItsReason() async {
+            for (reply, reason) in [
+                (StubReply.json(500, "{}"), "Dialecto answered 500"),
+                (.json(200, "[]"), "Dialecto's answer was not readable"),
+                (.json(200, #"{"key":"export.button","source_locale":"en","locales":[],"catalogs":[]}"#), EditorWords.noCatalog),
+            ] {
+                let setup = await open(language: "en", entries: reply)
+                await setup.model.load()
+                #expect(setup.model.phase == .failed(reason))
+                setup.session.signOut()
+            }
         }
 
         @Test func signedOutTheEditorAsksToSignIn() {

@@ -95,5 +95,7 @@
         case rateLimited(retryAfter: TimeInterval)
         case ended(String)
         case offline
+        /// Dialecto answered, but not with entries: the reason in a line.
+        case failed(String)
     }
 #endif
