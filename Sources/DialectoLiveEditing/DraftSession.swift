@@ -34,6 +34,11 @@
         private(set) var draftCount = 0
         /// The project's id in Dialecto, learned at sign-in; the editor's links use it.
         private(set) var projectID: String?
+        /// Dialecto's pull request page for the project, learned at sign-in or from an entries answer.
+        private(set) var previewURL: URL?
+        /// Entries answers by key, so the editor opens at once on a key seen before.
+        @ObservationIgnored private var entriesCache: [String: Entries] = [:]
+        @ObservationIgnored private var inFlight: [String: Task<EntriesOutcome, Never>] = [:]
 
         let project: String
         private let client: NativeClient
@@ -78,6 +83,7 @@
         func resume() {
             guard task == nil, let held = store.load(project: project) else { return }
             projectID = held.projectID
+            previewURL = held.previewURL
             token = held.token
             state = .signedIn
             task = Task { await feedLoop(token: held.token) }
@@ -96,11 +102,18 @@
             task = Task { await deviceFlow() }
         }
 
+        /// A token from before edit scopes can't save: drop it and start a sign-in that asks for them.
+        func signInAgain() {
+            signOut()
+            signIn()
+        }
+
         func signOut() {
             task?.cancel()
             task = nil
             store.forget(project: project)
             token = nil
+            dropCache()
             layer.clear()
             draftCount = 0
             offline = false
@@ -129,13 +142,90 @@
         /// Waits for the work in flight, for tests.
         func finish() async { await task?.value }
 
+        // MARK: Entries and saves
+
+        /// The last entries answer for `key`, if any.
+        func cachedEntries(_ key: String) -> Entries? { entriesCache[key] }
+
+        /// Fetches `key`'s entries in the background, so a click a moment later opens at once.
+        func prefetch(_ key: String) {
+            guard isSignedIn, entriesCache[key] == nil, inFlight[key] == nil else { return }
+            Task { _ = await fetchEntries(key) }
+        }
+
+        /// Every language's text of `key`. One request per key at a time; the answer is cached.
+        func fetchEntries(_ key: String) async -> EntriesOutcome {
+            guard isSignedIn, let token else { return .ended("signed_out") }
+            if let running = inFlight[key] { return await running.value }
+            let client = client
+            let running = Task { () -> EntriesOutcome in
+                do { return try await client.entries(token: token, key: key) } catch { return .offline }
+            }
+            inFlight[key] = running
+            let outcome = await running.value
+            inFlight[key] = nil
+            switch outcome {
+            case .found(let entries):
+                entriesCache[key] = entries
+                if let url = entries.previewURL, url != previewURL { previewURL = url }
+            case .notFound:
+                entriesCache[key] = nil
+            case .ended(let reason):
+                if self.token == token { end(reason == "access_denied" ? Failure.accessEnded : Failure.sessionEnded) }
+            default:
+                break
+            }
+            return outcome
+        }
+
+        /// Saves one language's text as the person's draft. A saved draft goes into the layer at once,
+        /// ahead of the feed, and into the cached entries, so the editor reopens on it.
+        func save(_ edit: EditRequest) async -> SaveOutcome {
+            guard isSignedIn, let token else { return .ended("signed_out") }
+            let outcome: SaveOutcome
+            do { outcome = try await client.save(token: token, edit) } catch { outcome = .offline }
+            switch outcome {
+            case .saved(let draft, let state, _):
+                let cell = DraftLayer.Cell(catalog: draft?.catalog ?? edit.catalog, key: edit.key, locale: edit.locale)
+                layer.upsert(cell, text: draft?.text)
+                remember(edit, draft: draft.flatMap { row in row.text.map { EntryDraft(text: $0, state: state) } })
+                draftCount = layer.draftCount
+                LiveStore.shared.bump()
+                onDraftsChanged?()
+            case .conflict:
+                // The cached text is stale: the next open reads it again.
+                entriesCache[edit.key] = nil
+            case .ended(let reason):
+                if self.token == token { end(reason == "access_denied" ? Failure.accessEnded : Failure.sessionEnded) }
+            default:
+                break
+            }
+            return outcome
+        }
+
+        private func remember(_ edit: EditRequest, draft: EntryDraft?) {
+            guard var entries = entriesCache[edit.key] else { return }
+            for c in entries.catalogs.indices where sameCatalog(entries.catalogs[c].catalog, edit.catalog) {
+                for l in entries.catalogs[c].languages.indices where entries.catalogs[c].languages[l].locale == edit.locale {
+                    entries.catalogs[c].languages[l].draft = draft
+                }
+            }
+            entriesCache[edit.key] = entries
+        }
+
+        private func dropCache() {
+            entriesCache = [:]
+            for running in inFlight.values { running.cancel() }
+            inFlight = [:]
+        }
+
         // MARK: Sign-in
 
         private func deviceFlow() async {
             state = .requesting
             let grant: DeviceGrant
             do {
-                grant = try await client.startDevice(repo: project)
+                grant = try await client.startDevice(repo: project, scope: "edit")
             } catch {
                 fail(Failure.unreachable)
                 return
@@ -155,11 +245,12 @@
                 }
                 do {
                     switch try await client.pollToken(deviceCode: grant.deviceCode) {
-                    case .token(let token, let expiresIn, let granted):
+                    case .token(let token, let expiresIn, let granted, let preview):
                         projectID = granted ?? grant.projectID
+                        previewURL = preview
                         let held = StoredSession(
                             token: token, expiresAt: now().addingTimeInterval(TimeInterval(expiresIn)),
-                            projectID: projectID)
+                            projectID: projectID, previewURL: preview)
                         store.save(held, project: project)
                         self.token = token
                         state = .signedIn
@@ -225,8 +316,10 @@
         }
 
         private func end(_ message: String) {
+            task?.cancel()
             store.forget(project: project)
             token = nil
+            dropCache()
             layer.clear()
             draftCount = 0
             LiveStore.shared.bump()

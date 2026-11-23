@@ -1,4 +1,7 @@
 #if DEBUG
+    #if canImport(AppKit) && !targetEnvironment(macCatalyst)
+        import AppKit
+    #endif
     import DialectoLive
     import Foundation
 
@@ -88,5 +91,54 @@
         public static func pickText(atScreenPoint x: Double, _ y: Double) {
             EditingRuntime.current?.pickText(atScreenPoint: x, y)
         }
+
+        #if canImport(AppKit) && !targetEnvironment(macCatalyst)
+            /// The floating editor's state in one line, for a demo that drives it headless: its phase and key,
+            /// then each field with its text and any error, then a banner or a question.
+            @_spi(Demo) @MainActor
+            public static var editorState: String {
+                guard let model = EditingRuntime.current?.editorModel else { return "closed" }
+                var parts = ["\(model.phase)", model.key]
+                for field in model.fields {
+                    var line = "\(field.locale)=\(field.text)"
+                    if field.isDirty { line += "*" }
+                    if let error = field.error { line += " !\(error)" }
+                    if let conflict = field.conflict { line += " conflict:\(conflict)" }
+                    parts.append(line)
+                }
+                if let banner = model.banner { parts.append("banner:\(banner)") }
+                if model.readOnly { parts.append("read-only") }
+                if model.confirmingDiscard { parts.append("asking") }
+                if let number = EditingRuntime.current?.editorWindowNumber, let panel = NSApp.window(withWindowNumber: number) {
+                    var focus = (panel.isKeyWindow ? "key" : "not key") + (NSApp.isActive ? "" : " (app inactive)")
+                    if let field = panel.firstResponder as? NSTextView {
+                        focus += " caret \(field.selectedRange().location)+\(field.selectedRange().length)/\((field.string as NSString).length)"
+                    }
+                    parts.append(focus)
+                }
+                return parts.joined(separator: " | ")
+            }
+
+            /// Told how long the floating editor took from the click to its first frame, in milliseconds.
+            @_spi(Demo) @MainActor
+            public static var onEditorShown: ((Double) -> Void)? {
+                get { EditingRuntime.onEditorShown }
+                set { EditingRuntime.onEditorShown = newValue }
+            }
+
+            /// Folds the floating editor's other languages open or shut, as a click on their row does.
+            @_spi(Demo) @MainActor
+            public static func showOtherLanguages(_ shown: Bool) {
+                EditingRuntime.current?.editorModel?.othersOpen = shown
+            }
+
+            /// The floating editor's window, while it is open.
+            @_spi(Demo) @MainActor
+            public static var editorWindowNumber: Int? { EditingRuntime.current?.editorWindowNumber }
+
+            /// Preview pull request's place on screen (Cocoa), when the dock shows it.
+            @_spi(Demo) @MainActor
+            public static var previewButtonScreenRect: CGRect? { EditingRuntime.current?.dockButtonScreenRect() }
+        #endif
     }
 #endif

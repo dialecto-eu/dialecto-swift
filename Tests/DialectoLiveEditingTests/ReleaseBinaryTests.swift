@@ -10,9 +10,13 @@
         /// Long literals (a Swift string of 15 bytes or fewer is stored inside the code, not as bytes) and type names.
         static let forbidden = [
             "api/live/native/device", "api/live/native/token", "api/live/native/drafts",
+            "api/live/native/entries", "api/live/native/edits",
             "eu.dialecto.live-editing",
             "Sign in to Dialecto", "Waiting for approval", "Sign out of Dialecto",
+            "Preview pull request", "Outdated after save", "Sign in again to save here",
             "EditingRuntime", "DraftSession", "DraftLayer", "LookupLog", "KeysPanel",
+            // The floating editor and its live redraw through a local draft.
+            "EditorModel", "FloatingEditorView", "EditorPanel", "PullRequestModel",
         ]
 
         private static var packageRoot: URL {

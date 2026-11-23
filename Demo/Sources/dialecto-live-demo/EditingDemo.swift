@@ -15,7 +15,8 @@
 //   pick <view>           the hit test at a view's center, without the event
 //   esc                   an Esc key-down, through the app's event queue
 //   editing               print whether Edit text is on
-//   capture window|panel  write <folder>/<name>.png as the screen shows it, titlebar and Edit text frame included
+//   capture window|panel [file]  write <folder>/<file or name>.png as the screen shows it, with the windows
+//                         attached to it (titlebar, Edit text frame, floating editor, sheet) and their shadows
 //   filter [text]         the keys panel's filter (empty clears it)
 //   appearance light|dark the app's appearance
 //   frames                print the demo window's and the keys panel's frames, top-left origin, for screencapture -R
@@ -23,8 +24,18 @@
 //   ax <view>             print the accessibility chain at a view's center (role, label, value, help)
 //   open sheet|popover|alert|panel   open one more window over the demo's (a sheet, a popover, an alert
 //                         sheet, a floating panel), each with a string of its own; `close` closes them
+//   type <text>           type into the floating editor's field; `replace <text>` selects all first
+//   key cmd-s|cmd-return|esc   a key-down to the floating editor, through the app's event queue
+//   editor                print the floating editor's state (phase, key, fields, banner)
+//   languages open|shut   fold the floating editor's other languages
+//   dock                  a real click on the dock's Preview pull request
+//   wait <seconds>        hold the next lines; `done` prints DONE
+//   activate              bring the app to the front, as a real click on it would
 //   quit
-// Views: title, export, gear (a button with a tooltip and no text), greeting, summary, library, plain
+// With `--language <code>` the app shows that language (German by default). Opening the floating editor
+// prints EDITOR_SHOWN with the milliseconds from the click to its first frame.
+// Views: title, export, gear (a button with a tooltip and no text), greeting, summary, library,
+// librarytitle (the same English text as library, under another key), slow (a long note), plain
 // (text that is not Dialecto's). `click`, `hover`, `pick` and `capture` also take @sheet, @popover, @alert
 // and @panel: the center of that window, or all of it.
 
@@ -62,12 +73,35 @@ import SwiftUI
                         12)
                 ),
                 ("nav.library", NSLocalizedString("nav.library", value: "Library", comment: "")),
+                ("slow.note", DialectoLive.string("slow.note", default: EditingDemo.slowNote)),
             ]
         }
     }
 
     struct DemoContent: View {
         var body: some View {
+            HStack(alignment: .top, spacing: 40) {
+                column
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(live: "library.title", default: "Library").font(.headline).reported("librarytitle")
+                    // A long note in a box, like an app's warning: the editor opens beside it.
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Text(live: "slow.note", default: EditingDemo.slowNote)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .reported("slow")
+                    }
+                    .padding(14)
+                    .frame(width: 300, alignment: .leading)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.7), lineWidth: 1))
+                }
+                .padding(.top, 32)
+            }
+            .frame(width: 760, height: 420, alignment: .topLeading)
+            .onPreferenceChange(FrameKey.self) { EditingDemo.frames = $0 }
+        }
+
+        private var column: some View {
             // `Text(live:)` below reads the store's revision, which redraws this view when a draft lands.
             VStack(alignment: .leading, spacing: 18) {
                 Text(live: "scenes.title", default: "Scenes").font(.title).reported("title")
@@ -91,13 +125,12 @@ import SwiftUI
                 Text(verbatim: "Build 42").font(.caption).foregroundStyle(.secondary).reported("plain")
             }
             .padding(32)
-            .frame(width: 420, height: 340, alignment: .topLeading)
-            .onPreferenceChange(FrameKey.self) { EditingDemo.frames = $0 }
         }
     }
 
     @MainActor
     enum EditingDemo {
+        static let slowNote = "This computer may be too slow for smooth video. Your trial lets you check before you buy."
         static var frames: [String: CGRect] = [:]
         private static var window: NSWindow?
         private static var extras: [String: NSWindow] = [:]
@@ -155,10 +188,17 @@ import SwiftUI
             {
                 storage = .file(URL(fileURLWithPath: String(arguments[index + 1].dropFirst(5))))
             }
-            DialectoLiveEditing.start(project: project, server: server, language: "de", tokenStorage: storage)
+            var language = "de"
+            if let index = arguments.firstIndex(of: "--language"), arguments.indices.contains(index + 1) {
+                language = arguments[index + 1]
+            }
+            DialectoLiveEditing.start(project: project, server: server, language: language, tokenStorage: storage)
+            DialectoLiveEditing.onEditorShown = { milliseconds in
+                EditingDemo.say("EDITOR_SHOWN \(String(format: "%.1f", milliseconds)) ms")
+            }
 
             let created = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 340),
+                contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             created.title = "Editing demo"
             created.contentView = NSHostingView(rootView: DemoContent())
@@ -186,11 +226,43 @@ import SwiftUI
                 lastShown = shown
                 say("SHOWN \(shown)")
             }
-            guard let out, let text = try? String(contentsOf: out.appendingPathComponent("cmd"), encoding: .utf8),
-                !text.isEmpty
-            else { return }
-            try? Data().write(to: out.appendingPathComponent("cmd"))
-            for line in text.split(separator: "\n") { command(String(line).trimmingCharacters(in: .whitespaces)) }
+            guard let out else { return }
+            if let text = try? String(contentsOf: out.appendingPathComponent("cmd"), encoding: .utf8), !text.isEmpty {
+                try? Data().write(to: out.appendingPathComponent("cmd"))
+                queue += text.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }
+            }
+            // `wait <seconds>` holds the lines after it, so one command file can script a whole run.
+            while Date() >= resumeAt, !queue.isEmpty {
+                let line = queue.removeFirst()
+                if line.hasPrefix("wait "), let seconds = Double(line.dropFirst(5)) {
+                    resumeAt = Date().addingTimeInterval(seconds)
+                } else {
+                    command(line)
+                }
+            }
+        }
+
+        private static var queue: [String] = []
+        private static var resumeAt = Date.distantPast
+
+        /// The floating editor's text field: its field editor while it has the keys.
+        private static var editorField: NSTextView? {
+            guard let number = DialectoLiveEditing.editorWindowNumber, let panel = NSApp.window(withWindowNumber: number)
+            else { return nil }
+            return panel.firstResponder as? NSTextView
+        }
+
+        private static func postKey(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
+            let number = DialectoLiveEditing.editorWindowNumber ?? window?.windowNumber ?? 0
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let event = NSEvent.keyEvent(
+                    with: type, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: number, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                    isARepeat: false, keyCode: keyCode)
+                {
+                    NSApp.postEvent(event, atStart: false)
+                }
+            }
         }
 
         private static func command(_ line: String) {
@@ -236,7 +308,7 @@ import SwiftUI
                     ? NSApp.windows.first { $0.isVisible && $0.title == "Dialecto Keys" }
                     : target.hasPrefix("@") ? extras[String(target.dropFirst())] : window
                 guard let shown else { say("NO WINDOW \(line)"); return }
-                let file = out.appendingPathComponent("\(target).png")
+                let file = out.appendingPathComponent("\(parts.count > 2 ? parts[2] : target).png")
                 say(capture(shown, to: file) ? "WROTE \(file.path)" : "NO CAPTURE \(line)")
             case "frames":
                 let height = NSScreen.screens.first?.frame.height ?? 0
@@ -280,6 +352,36 @@ import SwiftUI
                     node = current.responds(to: Selector("accessibilityParent")) ? current.perform(Selector("accessibilityParent"))?.takeUnretainedValue() : nil
                     depth += 1
                 }
+            case "type", "replace":
+                // Text goes through the field editor, as typed text does, so the field's binding sees each change.
+                guard let field = editorField else { say("NO FIELD \(line)"); return }
+                if name == "replace" { field.selectAll(nil) }
+                let text = line.split(separator: " ", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+                for character in text { field.insertText(String(character), replacementRange: field.selectedRange()) }
+            case "key":
+                switch parts.dropFirst().first {
+                case "cmd-s": postKey("s", keyCode: 1, modifiers: .command)
+                case "cmd-return": postKey("\r", keyCode: 36, modifiers: .command)
+                case "esc": postKey("\u{1B}", keyCode: 53)
+                default: say("UNKNOWN \(line)")
+                }
+            case "editor": say("EDITOR \(DialectoLiveEditing.editorState)")
+            case "languages": DialectoLiveEditing.showOtherLanguages(parts.last == "open")
+            case "dock":
+                // A real click on Preview pull request, through the app's event queue.
+                guard let window, let rect = DialectoLiveEditing.previewButtonScreenRect else { say("NO DOCK"); return }
+                let point = window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
+                if let event = NSEvent.mouseEvent(
+                    with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                {
+                    NSApp.postEvent(event, atStart: false)
+                }
+            case "done": say("DONE")
+            case "activate":
+                // A real click activates the app; an event posted from here does not.
+                NSApp.activate(ignoringOtherApps: true)
+                window?.makeKeyAndOrderFront(nil)
             case "open": openExtra(parts.dropFirst().first ?? "")
             case "close": closeExtras()
             case "quit": exit(0)
@@ -342,40 +444,15 @@ import SwiftUI
             extras = [:]
         }
 
-        private static func windowImage(_ number: Int) -> NSImage? {
-            let file = FileManager.default.temporaryDirectory.appendingPathComponent("dialecto-demo-\(number)-\(UUID().uuidString).png")
-            defer { try? FileManager.default.removeItem(at: file) }
+        /// screencapture -l takes the window with every window attached to it (a sheet, the Edit text frame,
+        /// the floating editor past the window's edge) and their shadows, even when other apps cover it.
+        private static func capture(_ shown: NSWindow, to file: URL) -> Bool {
             let shot = Process()
             shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            shot.arguments = ["-x", "-o", "-l", String(number), file.path]
-            guard (try? shot.run()) != nil else { return nil }
+            shot.arguments = ["-x", "-l", String(shown.windowNumber), file.path]
+            guard (try? shot.run()) != nil else { return false }
             shot.waitUntilExit()
-            return NSImage(contentsOf: file)
-        }
-
-        private static func capture(_ shown: NSWindow, to file: URL) -> Bool {
-            guard let base = windowImage(shown.windowNumber), let rep = base.representations.first else { return false }
-            let size = NSSize(width: rep.pixelsWide, height: rep.pixelsHigh)
-            guard
-                let bitmap = NSBitmapImageRep(
-                    bitmapDataPlanes: nil, pixelsWide: rep.pixelsWide, pixelsHigh: rep.pixelsHigh, bitsPerSample: 8,
-                    samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
-                    bitsPerPixel: 0)
-            else { return false }
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-            base.draw(in: NSRect(origin: .zero, size: size))
-            for child in shown.childWindows ?? [] where child.isVisible {
-                guard let layer = windowImage(child.windowNumber) else { continue }
-                let scale = size.width / shown.frame.width
-                let rect = NSRect(
-                    x: (child.frame.minX - shown.frame.minX) * scale, y: (child.frame.minY - shown.frame.minY) * scale,
-                    width: child.frame.width * scale, height: child.frame.height * scale)
-                layer.draw(in: rect)
-            }
-            NSGraphicsContext.restoreGraphicsState()
-            guard let png = bitmap.representation(using: .png, properties: [:]) else { return false }
-            return (try? png.write(to: file)) != nil
+            return shot.terminationStatus == 0 && FileManager.default.fileExists(atPath: file.path)
         }
     }
 #else

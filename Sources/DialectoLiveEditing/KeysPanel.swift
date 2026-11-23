@@ -60,6 +60,13 @@
         /// A line the panel shows until it is dismissed: a key the catalog lacks, a sign-in needed.
         private(set) var notice: String?
 
+        enum Step: Equatable { case keys, pullRequest }
+        /// The list of keys, or the pull request step that Preview pull request opens.
+        var step: Step = .keys
+        let pullRequest = PullRequestModel()
+        /// The row whose editor is open, drawn as picked.
+        var editingRowID: String?
+
         private let log: LookupLog
         private let layer: DraftLayer
         @ObservationIgnored private let dirty = OSAllocatedUnfairLock(initialState: false)
@@ -186,14 +193,37 @@
         var model: PanelModel
         var session: DraftSession
         var editMode: EditModeState
-        var open: (PanelRow) -> Void
+        /// A picked row, with its frame in the panel's global space: the editor opens beside it.
+        var open: (PanelRow, CGRect) -> Void
+        /// The row's arrow: the key in Dialecto, in the browser.
+        var openInBrowser: (PanelRow) -> Void
         var openProject: () -> Void
+        /// Preview pull request: the pull request step.
+        var showPullRequest: () -> Void
+        /// Open full diff and Open pull request: Dialecto's pull request page, in the browser.
+        var openPreview: () -> Void
         var close: (() -> Void)?
 
         var body: some View {
             VStack(spacing: 0) {
                 header
                 SeamLine()
+                if model.step == .pullRequest {
+                    PullRequestStep(model: model.pullRequest, back: { model.step = .keys }, openPreview: openPreview)
+                } else {
+                    keys
+                }
+            }
+            .background(Coastal.cream)
+            .tint(Coastal.sea)
+            .animation(.easeOut(duration: 0.15), value: session.state)
+            #if os(macOS)
+                .frame(minWidth: 380, minHeight: 420)
+            #endif
+        }
+
+        private var keys: some View {
+            VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
                     if !session.isSignedIn { SignInCard(session: session) }
                     toolbar
@@ -206,13 +236,25 @@
                 .padding(.bottom, 8)
                 Rectangle().fill(Coastal.edge).frame(height: 1)
                 list
+                if session.isSignedIn && session.draftCount > 0 { footer }
             }
-            .background(Coastal.cream)
-            .tint(Coastal.sea)
-            .animation(.easeOut(duration: 0.15), value: session.state)
-            #if os(macOS)
-                .frame(minWidth: 380, minHeight: 420)
-            #endif
+        }
+
+        /// The drafts count and Preview pull request, once per panel.
+        private var footer: some View {
+            HStack(spacing: 10) {
+                Text(session.draftCount == 1 ? "1 draft" : "\(session.draftCount) drafts")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Coastal.ink)
+                    .monospacedDigit()
+                Spacer()
+                Button("Preview pull request", action: showPullRequest)
+                    .buttonStyle(SolidButtonStyle(fill: Coastal.buttonTerra))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(Coastal.paper)
+            .overlay(alignment: .top) { Rectangle().fill(Coastal.edge).frame(height: 1) }
         }
 
         // MARK: Header
@@ -232,7 +274,8 @@
                 #endif
                 Spacer(minLength: 8)
                 if session.isSignedIn {
-                    statusChip
+                    // The drafts count sits in the footer; the head only says when Dialecto is unreachable.
+                    if session.offline { statusChip }
                     Menu {
                         Button("Open in Dialecto", action: openProject)
                         Divider()
@@ -336,7 +379,9 @@
             let rows = model.visible
             return List {
                 ForEach(rows) { row in
-                    KeyRowView(row: row, showCatalog: model.severalCatalogs) { open(row) }
+                    KeyRowView(
+                        row: row, showCatalog: model.severalCatalogs, picked: model.editingRowID == row.id,
+                        open: { frame in open(row, frame) }, openInBrowser: { openInBrowser(row) })
                         .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -549,11 +594,17 @@
     struct KeyRowView: View {
         var row: PanelRow
         var showCatalog: Bool
-        var open: () -> Void
+        var picked = false
+        /// Opens the editor beside the row; the frame is the row's, in the panel's global space.
+        var open: (CGRect) -> Void
+        var openInBrowser: () -> Void
         @State private var hovering = false
+        @State private var frame: CGRect = .zero
 
         var body: some View {
-            Button(action: open) {
+            Button {
+                open(frame)
+            } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(row.key)
@@ -563,6 +614,8 @@
                             .truncationMode(.middle)
                         Spacer(minLength: 8)
                         tag
+                        // Room for the arrow, which sits over the row's top right corner.
+                        Color.clear.frame(width: 16, height: 1)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(row.text.isEmpty ? "\u{2014}" : row.text)
@@ -578,15 +631,42 @@
                 }
                 .padding(.vertical, 7)
                 .padding(.horizontal, 8)
-                .background(RoundedRectangle(cornerRadius: 7).fill(hovering ? Coastal.cream2 : Color.clear))
+                .background(
+                    RoundedRectangle(cornerRadius: 7).fill(
+                        picked ? Coastal.infoBackground : hovering ? Coastal.cream2 : Color.clear)
+                )
+                .overlay(alignment: .leading) {
+                    if picked { Rectangle().fill(Coastal.sea).frame(width: 3) }
+                }
                 .overlay(alignment: .bottom) {
                     Rectangle().fill(Coastal.edgeSoft).frame(height: 1).padding(.horizontal, 8).offset(y: 1)
                 }
                 .contentShape(Rectangle())
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { frame = proxy.frame(in: .global) }
+                            .onChange(of: proxy.frame(in: .global)) { _, next in frame = next }
+                    })
             }
             .buttonStyle(.plain)
+            .help("Edit")
+            .overlay(alignment: .topTrailing) {
+                Button(action: openInBrowser) {
+                    Image(systemName: "arrow.up.forward.square")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Coastal.sea)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                        .accessibilityLabel(Text(verbatim: "Open in Dialecto"))
+                }
+                .buttonStyle(.plain)
+                .help("Open in Dialecto")
+                .padding(.top, 4)
+                .padding(.trailing, 4)
+                .opacity(hovering ? 1 : 0)
+            }
             .onHover { hovering = $0 }
-            .help("Open in Dialecto")
         }
 
         @ViewBuilder private var tag: some View {

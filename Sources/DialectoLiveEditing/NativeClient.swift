@@ -26,7 +26,7 @@
 
     /// One answer of the token poll.
     enum TokenPoll: Sendable, Equatable {
-        case token(String, expiresIn: Int, projectID: String?)
+        case token(String, expiresIn: Int, projectID: String?, previewURL: URL? = nil)
         case pending
         case slowDown
         case expired
@@ -78,8 +78,10 @@
             return URLSession(configuration: configuration)
         }
 
-        func startDevice(repo: String) async throws -> DeviceGrant {
-            let (status, data, _) = try await send(path: "api/live/native/device", method: "POST", json: ["repo": repo])
+        /// `scope` is `edit` for a session that saves drafts from the app, `read` for one that only shows them.
+        func startDevice(repo: String, scope: String = "edit") async throws -> DeviceGrant {
+            let (status, data, _) = try await send(
+                path: "api/live/native/device", method: "POST", json: ["repo": repo, "scope": scope])
             guard status == 200 else { throw NativeError.unexpected(status: status) }
             guard let grant = try? JSONDecoder().decode(DeviceGrant.self, from: data) else { throw NativeError.malformed }
             return grant
@@ -93,7 +95,8 @@
                 guard let token = object?["access_token"] as? String else { throw NativeError.malformed }
                 return .token(
                     token, expiresIn: object?["expires_in"] as? Int ?? 8 * 3600,
-                    projectID: object?["project_id"] as? String)
+                    projectID: object?["project_id"] as? String,
+                    previewURL: (object?["preview_url"] as? String).flatMap(URL.init(string:)))
             }
             guard status == 400 else { throw NativeError.unexpected(status: status) }
             switch object?["error"] as? String {
@@ -138,6 +141,68 @@
                 return .ended(object?["error"] as? String ?? "invalid_token")
             case 422:
                 return .unsupportedFormat
+            case 429:
+                return .rateLimited(retryAfter: headers["retry-after"].flatMap(TimeInterval.init) ?? 60)
+            default:
+                throw NativeError.unexpected(status: status)
+            }
+        }
+
+        /// Every language's text of `key`, per catalog, with the person's own drafts.
+        func entries(token: String, key: String) async throws -> EntriesOutcome {
+            let (status, data, headers) = try await send(
+                path: "api/live/native/entries", method: "GET", query: [URLQueryItem(name: "key", value: key)],
+                bearer: token)
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            switch status {
+            case 200:
+                guard let entries = try? JSONDecoder().decode(Entries.self, from: data) else { throw NativeError.malformed }
+                return .found(entries)
+            case 401: return .ended(object?["error"] as? String ?? "invalid_token")
+            case 403: return .forbidden
+            case 404: return .notFound
+            case 422: return .unsupportedFormat
+            case 429: return .rateLimited(retryAfter: headers["retry-after"].flatMap(TimeInterval.init) ?? 60)
+            default: throw NativeError.unexpected(status: status)
+            }
+        }
+
+        /// Saves one language's text as the person's draft.
+        func save(token: String, _ edit: EditRequest) async throws -> SaveOutcome {
+            let (status, data, headers) = try await send(
+                path: "api/live/native/edits", method: "POST",
+                json: [
+                    "catalog": edit.catalog, "key": edit.key, "locale": edit.locale, "text": edit.text,
+                    "replaces": edit.replaces,
+                ],
+                bearer: token)
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let error = object?["error"] as? String
+            switch status {
+            case 200:
+                struct Body: Decodable {
+                    var draft: DraftRow?
+                    var state: String?
+                    var hash: String?
+                }
+                guard let body = try? JSONDecoder().decode(Body.self, from: data) else { throw NativeError.malformed }
+                return .saved(draft: body.draft, state: body.state, hash: body.hash)
+            case 401:
+                return .ended(error ?? "invalid_token")
+            case 403:
+                return error == "needs_edit_scope" ? .needsEditScope : .forbidden
+            case 404:
+                return .notFound
+            case 409:
+                if error == "pending_by_other" { return .pendingByOther }
+                let current = (object?["current"] as? [String: Any])?["text"] as? String
+                guard error == "conflict", let current else { throw NativeError.malformed }
+                return .conflict(current: current)
+            case 422:
+                return .refused(
+                    SaveRefusal(
+                        error: error ?? "not_saved", reason: object?["reason"] as? String,
+                        missing: object?["missing"] as? [String] ?? [], extra: object?["extra"] as? [String] ?? []))
             case 429:
                 return .rateLimited(retryAfter: headers["retry-after"].flatMap(TimeInterval.init) ?? 60)
             default:

@@ -100,11 +100,36 @@
             var label: String
         }
 
+        /// A tooltip being edited: Dialecto draws it under its control, with the typed text.
+        struct Tip {
+            /// The control, in the window's own space.
+            var control: CGRect
+            var model: EditorModel
+        }
+
         var outline: Outline?
+        /// The text whose editor is open, outlined while it is.
+        var pinned: Outline?
+        var tip: Tip?
         /// No badge: the window is small.
         var compact = false
+        /// The dock's parts as drawn, in the window's own space: a click there is the dock's, not the app's.
+        @ObservationIgnored var badgeRect: CGRect?
+        @ObservationIgnored var goRect: CGRect?
 
         init(compact: Bool = false) { self.compact = compact }
+
+        /// A screen rect (Cocoa, origin bottom left) in a window's own space (origin top left).
+        static func local(_ rect: CGRect, in window: NSWindow) -> CGRect {
+            let frame = window.frame
+            return CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+        }
+
+        /// The other way: a rect in a window's own space on the screen.
+        static func screen(_ rect: CGRect, in window: NSWindow) -> CGRect {
+            let frame = window.frame
+            return CGRect(x: frame.minX + rect.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+        }
     }
 
     /// A click-through window over an app window while Edit text is on: a sea frame, a badge and the hover
@@ -116,7 +141,7 @@
         static func isCompact(_ parent: NSWindow) -> Bool { parent.frame.width < 300 || parent.frame.height < 160 }
 
         @MainActor
-        init(over parent: NSWindow) {
+        init(over parent: NSWindow, session: DraftSession, panel: PanelModel) {
             state = EditFrameState(compact: Self.isCompact(parent))
             super.init(contentRect: parent.frame, styleMask: .borderless, backing: .buffered, defer: false)
             isOpaque = false
@@ -125,7 +150,7 @@
             ignoresMouseEvents = true
             isReleasedWhenClosed = false
             collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
-            contentView = NSHostingView(rootView: EditFrameView(state: state))
+            contentView = NSHostingView(rootView: EditFrameView(state: state, session: session, panel: panel))
             if let panel = parent as? NSPanel, panel.isFloatingPanel { level = parent.level }
         }
 
@@ -136,51 +161,107 @@
     /// The frame's drawing. The corner follows a titled macOS window's.
     struct EditFrameView: View {
         var state: EditFrameState
+        var session: DraftSession
+        var panel: PanelModel
 
         var body: some View {
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Coastal.sea, lineWidth: 3)
-                if let outline = state.outline { outlineView(outline) }
-                if !state.compact {
-                    VStack {
-                        Spacer()
-                        HStack {
+            GeometryReader { proxy in
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Coastal.sea, lineWidth: 3)
+                    if let pinned = state.pinned { outlineView(pinned, picked: true) }
+                    if let outline = state.outline, outline.rect != state.pinned?.rect { outlineView(outline, picked: false) }
+                    if let tip = state.tip { tipPreview(tip, width: proxy.size.width) }
+                    if !state.compact {
+                        VStack {
                             Spacer()
-                            badge
-                            Spacer()
+                            HStack {
+                                Spacer()
+                                dock
+                                Spacer()
+                            }
                         }
+                        .padding(.bottom, 12)
                     }
-                    .padding(.bottom, 12)
                 }
             }
+            .coordinateSpace(name: Self.space)
             .ignoresSafeArea()
         }
 
-        private var badge: some View {
-            HStack(spacing: 6) {
-                Image(systemName: EditTextToggle.symbol)
-                Text("Editing text")
-                Text("esc")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(.white.opacity(0.22)))
+        static let space = "dialecto-frame"
+
+        /// The Editing text badge, which grows into the drafts count and Preview pull request.
+        private var dock: some View {
+            let count = session.isSignedIn ? session.draftCount : 0
+            return HStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: EditTextToggle.symbol)
+                    Text("Editing text")
+                    Text("esc")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(.white.opacity(0.22)))
+                }
+                .padding(.horizontal, 12)
+                .frame(maxHeight: .infinity)
+                .reportFrame { state.badgeRect = $0 }
+                if count > 0 {
+                    Rectangle().fill(.white.opacity(0.3)).frame(width: 1, height: 16)
+                    HStack(spacing: 6) {
+                        Circle().fill(Coastal.gold).frame(width: 7, height: 7)
+                        Text(count == 1 ? "1 draft" : "\(count) drafts").monospacedDigit()
+                    }
+                    .padding(.horizontal, 12)
+                    if panel.step != .pullRequest {
+                        Text("Preview pull request")
+                            .padding(.horizontal, 12)
+                            .frame(height: 24)
+                            .background(Capsule().fill(Coastal.buttonTerra))
+                            .padding(3)
+                            .reportFrame { state.goRect = $0 }
+                    }
+                }
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 26)
+            .frame(height: 30)
             .background(Capsule().fill(Coastal.buttonSea))
-            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+            .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
+            .onChange(of: count) { _, next in if next == 0 { state.goRect = nil } }
+            .onChange(of: panel.step) { _, step in if step == .pullRequest { state.goRect = nil } }
         }
 
-        private func outlineView(_ outline: EditFrameState.Outline) -> some View {
+        /// The tooltip as it will read, under its control, while its editor is open.
+        private func tipPreview(_ tip: EditFrameState.Tip, width: CGFloat) -> some View {
+            let text = tip.model.liveText
+            let size = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11.5)])
+            let w = ceil(size.width) + 14
+            let x = min(max(tip.control.midX - w / 2, 8), width - w - 8)
+            return Text(text)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Coastal.tipInk)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Coastal.tipBackground))
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Coastal.sea, lineWidth: 1.5))
+                .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                .offset(x: x, y: EditFrameView.tipTop(below: tip.control))
+                .allowsHitTesting(false)
+        }
+
+        /// Under the control and its key's tab.
+        static func tipTop(below control: CGRect) -> CGFloat { control.maxY + 3 + 19 + 9 }
+
+        private func outlineView(_ outline: EditFrameState.Outline, picked: Bool) -> some View {
             let box = outline.rect.insetBy(dx: -4, dy: -3)
             let tabAbove = box.minY > 22
             return ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Coastal.sea.opacity(0.10))
+                    .fill(Coastal.sea.opacity(picked ? 0 : 0.10))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Coastal.sea, lineWidth: 2))
                     .background(RoundedRectangle(cornerRadius: 7.5).stroke(.white.opacity(0.85), lineWidth: 1.5).padding(-1.5))
                     .frame(width: box.width, height: box.height)
@@ -215,6 +296,9 @@
         private var frames: [ObjectIdentifier: (parent: NSWindow, overlay: EditFrameWindow, movedEvents: Bool)] = [:]
         private var observers: [NSObjectProtocol] = []
         private var hovering = false
+        private var keyMonitor: Any?
+        /// The floating editor, while it is open.
+        private(set) var editor: EditorController?
         private let item = NSMenuItem(title: "Dialecto", action: nil, keyEquivalent: "")
         private let signInItem = NSMenuItem(title: "Sign in to Dialecto", action: #selector(signInOrOut), keyEquivalent: "")
         private let editItem = NSMenuItem(title: "Edit text", action: #selector(toggleEdit), keyEquivalent: "e")
@@ -237,6 +321,7 @@
         /// SwiftUI builds the main menu after launch and may rebuild it, so the item is put back whenever the
         /// app becomes active.
         func installMenu() {
+            installKeys()
             ensureMenu()
             let center = NotificationCenter.default
             for name in [NSApplication.didFinishLaunchingNotification, NSApplication.didBecomeActiveNotification] {
@@ -294,8 +379,11 @@
             if window == nil {
                 let panel = KeysPanel(
                     model: runtime.model, session: runtime.session, editMode: runtime.editState,
-                    open: { [weak runtime] row in runtime?.openEditor(key: row.key) },
+                    open: { [weak self] row, frame in self?.openRow(row, frame: frame) },
+                    openInBrowser: { [weak runtime] row in runtime?.openEditor(key: row.key) },
                     openProject: { [weak runtime] in runtime?.openProject() },
+                    showPullRequest: { [weak runtime] in runtime?.showPullRequest() },
+                    openPreview: { [weak runtime] in runtime?.openPreview() },
                     close: nil)
                 let created = NSPanel(
                     contentRect: NSRect(x: 0, y: 0, width: 440, height: 600),
@@ -341,7 +429,7 @@
         }
 
         private func isAppWindow(_ candidate: NSWindow) -> Bool {
-            guard candidate.isVisible, candidate !== window, !(candidate is EditFrameWindow),
+            guard candidate.isVisible, candidate !== window, !(candidate is EditFrameWindow), !(candidate is EditorPanel),
                 candidate.frame.width > 20, candidate.frame.height > 20
             else { return false }
             let name = NSStringFromClass(type(of: candidate))
@@ -396,10 +484,11 @@
                 nonisolated(unsafe) let event = event
                 let consumed = MainActor.assumeIsolated { () -> Bool in
                     guard let self, let target = event.window, self.isAppWindow(target) else { return false }
+                    if self.clickedDock(event, in: target) { return true }
                     // Cocoa screen space already (origin bottom left): do not flip it.
-                    let hit = MacHitTest.hit(at: target.convertPoint(toScreen: event.locationInWindow), in: self.appWindows())
-                    self.runtime.pick(
-                        text: hit?.text, tooltip: hit?.tooltip, preferTooltip: event.modifierFlags.contains(.option))
+                    let point = target.convertPoint(toScreen: event.locationInWindow)
+                    let hit = MacHitTest.hit(at: point, in: self.appWindows())
+                    self.pick(hit, at: point, in: target, preferTooltip: event.modifierFlags.contains(.option))
                     return true
                 }
                 return consumed ? nil : event
@@ -413,22 +502,182 @@
             }) {
                 monitors.append(move)
             }
-            if let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+        }
+
+        /// Esc, ⌘S and ⌘↵ for the editor while it is open, and Esc to end Edit text. Installed once: the
+        /// editor also opens from the Keys panel, with Edit text off.
+        private func installKeys() {
+            guard keyMonitor == nil else { return }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 nonisolated(unsafe) let event = event
-                let consumed = MainActor.assumeIsolated { () -> Bool in
-                    guard let self, event.keyCode == 53, self.runtime.editState.isOn else { return false }
-                    self.runtime.editState.isOn = false
+                let consumed = MainActor.assumeIsolated { () -> Bool in self?.key(event) ?? false }
+                return consumed ? nil : event
+            }
+        }
+
+        private func key(_ event: NSEvent) -> Bool {
+            let escape = event.keyCode == 53
+            if let editor {
+                guard event.window === editor.panel || runtime.editState.isOn else { return false }
+                let command = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+                if escape {
+                    editor.model.escape()
                     return true
                 }
-                return consumed ? nil : event
-            }) {
-                monitors.append(escape)
+                if case .choosing(let choices) = editor.model.phase, event.keyCode == 36 || event.keyCode == 76,
+                    let first = choices.first
+                {
+                    let model = editor.model
+                    Task { await model.choose(first) }
+                    return true
+                }
+                if command, event.charactersIgnoringModifiers == "s" || event.keyCode == 36 || event.keyCode == 76 {
+                    let model = editor.model
+                    Task { await model.save() }
+                    return true
+                }
+                return false
             }
+            guard escape, runtime.editState.isOn else { return false }
+            runtime.editState.isOn = false
+            return true
+        }
+
+        // MARK: The floating editor
+
+        /// A click on text in Edit text mode: the editor on its key, a choice of keys, or a note that the
+        /// text has none. A click on nothing of Dialecto's closes an open editor, asking first.
+        func pick(_ hit: MacHitTest.Hit?, at point: NSPoint, in window: NSWindow, preferTooltip: Bool = false) {
+            let ordered = preferTooltip ? [hit?.tooltip, hit?.text] : [hit?.text, hit?.tooltip]
+            guard let chosen = ordered.compactMap({ $0 }).first(where: { !runtime.keys(for: $0).isEmpty }) else {
+                if let editor {
+                    editor.model.requestClose()
+                } else {
+                    runtime.model.noKey(for: hit?.text)
+                }
+                return
+            }
+            runtime.model.clearNote()
+            let found = runtime.keys(for: chosen)
+            // A view with no visible text answers its tooltip as its text too: that is still the tooltip.
+            let isTooltip = chosen == hit?.tooltip
+            let anchor = hit?.frame ?? NSRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)
+            let open: () -> Void = { [weak self] in
+                self?.presentEditor(
+                    choices: EditingRuntime.choices(found), text: chosen, isTooltip: isTooltip, anchor: anchor,
+                    parent: window, clickPoint: point)
+            }
+            if let editor {
+                editor.model.requestClose(then: open)
+            } else {
+                open()
+            }
+        }
+
+        /// A row picked in the Keys panel: the same editor, beside the row.
+        func openRow(_ row: PanelRow, frame: CGRect) {
+            guard let window, let content = window.contentView else { return }
+            var local = NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
+            if !content.isFlipped { local.origin.y = content.bounds.height - frame.maxY }
+            let anchor = window.convertToScreen(content.convert(local, to: nil))
+            let choice = EditorModel.KeyChoice(key: row.key, catalog: row.catalog, text: row.text)
+            let open: () -> Void = { [weak self] in
+                self?.presentEditor(
+                    choices: [choice], text: row.text, isTooltip: false, anchor: anchor, parent: window, clickPoint: nil)
+                self?.runtime.model.editingRowID = row.id
+            }
+            if let editor {
+                editor.model.requestClose(then: open)
+            } else {
+                open()
+            }
+        }
+
+        private func presentEditor(
+            choices: [EditorModel.KeyChoice], text: String, isTooltip: Bool, anchor: NSRect, parent: NSWindow,
+            clickPoint: NSPoint?
+        ) {
+            let started = CACurrentMediaTime()
+            let model = EditorModel(
+                choices: choices, shownText: text, isTooltip: isTooltip, session: runtime.session, layer: runtime.layer)
+            let overlay = frames[ObjectIdentifier(parent)]?.overlay
+            var anchor = anchor
+            if let overlay, let key = choices.first?.key {
+                let local = EditFrameState.local(anchor, in: parent)
+                let label = Set(choices.map(\.key)).count > 1 ? "\(Set(choices.map(\.key)).count) keys" : key
+                overlay.state.pinned = .init(rect: local, label: (isTooltip ? "Tooltip: " : "") + label)
+                overlay.state.outline = nil
+                if isTooltip {
+                    overlay.state.tip = .init(control: local, model: model)
+                    // The panel goes under the tooltip Dialecto draws.
+                    let top = EditFrameView.tipTop(below: local)
+                    let tip = CGRect(x: local.minX, y: top, width: local.width, height: 21)
+                    anchor = anchor.union(EditFrameState.screen(tip, in: parent))
+                }
+            }
+            let controller = EditorController(
+                model: model, session: runtime.session, anchor: anchor, prefersBelow: isTooltip, parent: parent,
+                openInDialecto: { [weak runtime] key in runtime?.openEditor(key: key) })
+            model.onClose = { [weak self, weak controller] in
+                guard let self, let controller, self.editor === controller else { return }
+                self.closeEditor()
+            }
+            model.onTyped = { [weak self] in self?.followText(clickPoint: clickPoint, in: parent) }
+            editor = controller
+            controller.show()
+            EditingRuntime.onEditorShown?((CACurrentMediaTime() - started) * 1000)
+            Task { await model.load() }
+        }
+
+        func closeEditor() {
+            guard let controller = editor else { return }
+            editor = nil
+            controller.dismiss()
+            for (_, held) in frames {
+                held.overlay.state.pinned = nil
+                held.overlay.state.tip = nil
+            }
+            runtime.model.editingRowID = nil
+        }
+
+        /// The typed text redraws the app's text: the outline follows its new frame.
+        private func followText(clickPoint: NSPoint?, in parent: NSWindow) {
+            guard let clickPoint, let overlay = frames[ObjectIdentifier(parent)]?.overlay, overlay.state.pinned != nil
+            else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self, let pinned = overlay.state.pinned, overlay.state.tip == nil,
+                    let frame = MacHitTest.hit(at: clickPoint, in: self.appWindows())?.frame
+                else { return }
+                let local = EditFrameState.local(frame, in: parent)
+                if local != pinned.rect { overlay.state.pinned?.rect = local }
+            }
+        }
+
+        func dockButtonScreenRect() -> CGRect? {
+            for (_, held) in frames {
+                if let go = held.overlay.state.goRect { return EditFrameState.screen(go, in: held.parent) }
+            }
+            return nil
+        }
+
+        /// A click on the dock: Preview pull request, or the badge, which ends Edit text.
+        private func clickedDock(_ event: NSEvent, in target: NSWindow) -> Bool {
+            guard let state = frames[ObjectIdentifier(target)]?.overlay.state else { return false }
+            let point = CGPoint(x: event.locationInWindow.x, y: target.frame.height - event.locationInWindow.y)
+            if let go = state.goRect, go.contains(point) {
+                runtime.showPullRequest()
+                return true
+            }
+            if let badge = state.badgeRect, badge.contains(point) {
+                runtime.editState.isOn = false
+                return true
+            }
+            return false
         }
 
         private func attachFrame(to parent: NSWindow) {
             guard frames[ObjectIdentifier(parent)] == nil else { return }
-            let overlay = EditFrameWindow(over: parent)
+            let overlay = EditFrameWindow(over: parent, session: runtime.session, panel: runtime.model)
             overlay.setFrame(parent.frame, display: false)
             parent.addChildWindow(overlay, ordered: .above)
             frames[ObjectIdentifier(parent)] = (parent, overlay, parent.acceptsMouseMovedEvents)
@@ -448,7 +697,12 @@
         private func hover(_ event: NSEvent) {
             let target = event.window.flatMap { frames[ObjectIdentifier($0)] }
             var shown: (overlay: EditFrameWindow, outline: EditFrameState.Outline)?
+            var overDock = false
             if event.type == .mouseMoved, let target, let parent = event.window {
+                let local = CGPoint(x: event.locationInWindow.x, y: parent.frame.height - event.locationInWindow.y)
+                overDock = [target.overlay.state.goRect, target.overlay.state.badgeRect].contains { $0?.contains(local) ?? false }
+            }
+            if event.type == .mouseMoved, !overDock, let target, let parent = event.window {
                 let point = parent.convertPoint(toScreen: event.locationInWindow)
                 if let hit = MacHitTest.hit(at: point, in: appWindows()), let rect = hit.frame {
                     // The same choice a click makes: the text, else the tooltip; Option puts the tooltip first.
@@ -456,17 +710,22 @@
                     let chosen = ordered.first { !runtime.keys(for: $0).isEmpty } ?? nil
                     let names = Array(Set(runtime.keys(for: chosen).map(\.key))).sorted()
                     if let first = names.first {
-                        let frame = parent.frame
-                        let local = CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+                        let local = EditFrameState.local(rect, in: parent)
                         let prefix = chosen != nil && chosen == hit.tooltip ? "Tooltip: " : ""
                         shown = (target.overlay, .init(rect: local, label: prefix + (names.count == 1 ? first : "\(names.count) keys")))
+                        // Read the key's languages now, so a click opens the editor at once.
+                        for name in names { runtime.session.prefetch(name) }
                     }
                 }
             }
             for (_, held) in frames where held.overlay !== shown?.overlay {
                 if held.overlay.state.outline != nil { held.overlay.state.outline = nil }
             }
-            if let shown {
+            if overDock {
+                hovering = true
+                NSCursor.pointingHand.set()
+                DispatchQueue.main.async { if self.hovering { NSCursor.pointingHand.set() } }
+            } else if let shown {
                 if shown.overlay.state.outline != shown.outline { shown.overlay.state.outline = shown.outline }
                 hovering = true
                 NSCursor.pointingHand.set()
@@ -493,8 +752,28 @@
         func editModeChanged(_ on: Bool) { (platform as? MacSupport)?.setMonitoring(on) }
 
         func pickText(atScreenPoint x: Double, _ y: Double) {
-            let hit = (platform as? MacSupport).flatMap { MacHitTest.hit(at: NSPoint(x: x, y: y), in: $0.appWindows()) }
-            pick(text: hit?.text, tooltip: hit?.tooltip)
+            guard let support = platform as? MacSupport else { return }
+            let point = NSPoint(x: x, y: y)
+            let windows = support.appWindows()
+            // The frontmost window under the point: a sheet before the window it sits on.
+            guard
+                let window = windows.filter({ $0.frame.contains(point) }).min(by: { $0.orderedIndex < $1.orderedIndex })
+                    ?? windows.first
+            else { return }
+            support.pick(MacHitTest.hit(at: point, in: windows), at: point, in: window)
+        }
+
+        /// The floating editor's model while it is open, for a demo that drives it headless.
+        var editorModel: EditorModel? { (platform as? MacSupport)?.editor?.model }
+
+        var editorWindowNumber: Int? { (platform as? MacSupport)?.editor?.panel.windowNumber }
+
+        func closeEditor() { (platform as? MacSupport)?.closeEditor() }
+
+        /// Preview pull request's place on screen (Cocoa), when the dock shows it.
+        func dockButtonScreenRect() -> CGRect? {
+            guard let support = platform as? MacSupport else { return nil }
+            return support.dockButtonScreenRect()
         }
 
         func snapshotPanel(to url: URL) -> Bool { (platform as? MacSupport)?.snapshot(to: url) ?? false }

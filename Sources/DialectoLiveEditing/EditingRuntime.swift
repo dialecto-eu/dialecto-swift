@@ -6,6 +6,8 @@
     @MainActor
     final class EditingRuntime {
         static var current: EditingRuntime?
+        /// Told how long the floating editor took to open, in milliseconds, for a demo that measures it.
+        static var onEditorShown: ((Double) -> Void)?
 
         let server: URL
         let layer: DraftLayer
@@ -99,6 +101,33 @@
                     showPanel()
                 }
             }
+        }
+
+        /// Preview pull request: the Keys panel's pull request step, with each draft before and after.
+        func showPullRequest() {
+            model.step = .pullRequest
+            showPanel()
+            Task { await model.pullRequest.load(session: session, layer: layer) }
+        }
+
+        /// Open full diff and Open pull request: Dialecto's pull request page. The app opens no pull
+        /// request itself.
+        func openPreview() {
+            if let url = session.previewURL {
+                Self.open(url)
+            } else if let id = session.projectID,
+                var components = URLComponents(url: server, resolvingAgainstBaseURL: false)
+            {
+                components.path = "/repos/\(id)/pull-request"
+                if let url = components.url { Self.open(url) }
+            } else {
+                openProject()
+            }
+        }
+
+        /// The key choices a click's matches make, one per key and catalog.
+        static func choices(_ found: [LookupEntry]) -> [EditorModel.KeyChoice] {
+            found.map { EditorModel.KeyChoice(key: $0.key, catalog: $0.catalog, text: $0.text) }
         }
 
         /// The project's catalog in Dialecto.

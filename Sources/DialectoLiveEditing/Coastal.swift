@@ -38,6 +38,10 @@
         static let infoBackground = pair(0xE7F1F8, 0x102733)
         static let okBackground = pair(0xEEF2DF, 0x242B18)
 
+        /// A system tooltip's paper and ink, for the tooltip Dialecto draws while one is edited.
+        static let tipBackground = pair(0xF6F4F1, 0x2F2C33)
+        static let tipInk = pair(0x1D1D1F, 0xF2F2F2)
+
         private static func pair(_ light: UInt32, _ dark: UInt32) -> Color {
             #if canImport(AppKit) && !targetEnvironment(macCatalyst)
                 Color(

@@ -190,8 +190,11 @@
             while let next = top?.presentedViewController { top = next }
             let panel = KeysPanel(
                 model: runtime.model, session: runtime.session, editMode: runtime.editState,
-                open: { [weak runtime] row in runtime?.openEditor(key: row.key) },
+                open: { [weak runtime] row, _ in runtime?.openEditor(key: row.key) },
+                openInBrowser: { [weak runtime] row in runtime?.openEditor(key: row.key) },
                 openProject: { [weak runtime] in runtime?.openProject() },
+                showPullRequest: { [weak runtime] in runtime?.showPullRequest() },
+                openPreview: { [weak runtime] in runtime?.openPreview() },
                 close: { [weak top] in top?.dismiss(animated: true) })
             runtime.model.refresh()
             let host = PanelHostController(rootView: panel)

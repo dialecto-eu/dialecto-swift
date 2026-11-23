@@ -1,0 +1,132 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "alert.body" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "This cannot be undone." } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Das lässt sich nicht rückgängig machen." } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "No se puede deshacer." } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Cette action est irréversible." } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Non si può annullare." } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "この操作は取り消せません。" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Tego nie można cofnąć." } }
+    } },
+    "alert.ok" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Löschen" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Eliminar" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprimer" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Elimina" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Usuń" } }
+    } },
+    "alert.title" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete this scene?" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Diese Szene löschen?" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Eliminar esta escena?" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprimer cette scène ?" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Eliminare questa scena?" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "このシーンを削除しますか？" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Usunąć tę scenę?" } }
+    } },
+    "export.button" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Export" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Exportieren" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Exportar" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Exporter" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Esporta" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "書き出す" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Eksportuj" } }
+    } },
+    "gear.help" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Open the settings" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Einstellungen öffnen" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir los ajustes" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrir les réglages" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Apri le impostazioni" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定を開く" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Otwórz ustawienia" } }
+    } },
+    "greeting.name" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Hello, %@!" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Hallo, %@!" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "¡Hola, %@!" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Bonjour, %@ !" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Ciao, %@!" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "こんにちは、%@さん" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Cześć, %@!" } }
+    } },
+    "library.summary" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ holds %2$lld scenes" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ enthält %2$lld Szenen" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ tiene %2$lld escenas" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ contient %2$lld scènes" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ contiene %2$lld scene" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@には%2$lld個のシーンがあります" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ ma %2$lld scen" } }
+    } },
+    "library.title" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Library" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Mediathek" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Biblioteca" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Bibliothèque" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Libreria" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライブラリ" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Biblioteka" } }
+    } },
+    "nav.library" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Library" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Bibliothek" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Biblioteca" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Bibliothèque" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Libreria" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライブラリ" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Biblioteka" } }
+    } },
+    "panel.title" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Scene details" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Szenendetails" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Detalles de la escena" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Détails de la scène" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Dettagli della scena" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "シーンの詳細" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Szczegóły sceny" } }
+    } },
+    "popover.title" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Scenes in your library" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Szenen in deiner Bibliothek" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Escenas de tu biblioteca" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Scènes de ta bibliothèque" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Scene nella tua libreria" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライブラリのシーン" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Sceny w twojej bibliotece" } }
+    } },
+    "scenes.title" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Scenes" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Szenen" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Escenas" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Scènes" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Scene" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "シーン" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Sceny" } }
+    } },
+    "sheet.title" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Rename this scene" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Diese Szene umbenennen" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Cambiar el nombre de esta escena" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Renommer cette scène" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Rinomina questa scena" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "このシーンの名前を変更" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Zmień nazwę tej sceny" } }
+    } },
+    "slow.note" : { "localizations" : {
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "This computer may be too slow for smooth video. Your trial lets you check before you buy." } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Dieser Computer ist möglicherweise zu langsam für flüssiges Video. Mit Ihrer Testversion können Sie das vor dem Kauf prüfen." } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Es posible que este ordenador sea demasiado lento para un vídeo fluido. Tu prueba te permite comprobarlo antes de comprar." } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Cet ordinateur est peut-être trop lent pour une vidéo fluide. Votre essai vous permet de vérifier avant d’acheter." } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Questo computer potrebbe essere troppo lento per un video fluido. La prova ti permette di verificare prima di acquistare." } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "このコンピュータでは、映像が滑らかに動作しない可能性があります。トライアル中に、購入前にご確認いただけます。" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Ten komputer może być zbyt wolny, aby wideo działało płynnie. Okres próbny pozwala to sprawdzić przed zakupem." } }
+    } }
+  },
+  "version" : "1.0"
+}

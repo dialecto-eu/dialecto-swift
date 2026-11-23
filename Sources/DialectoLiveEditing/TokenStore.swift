@@ -8,6 +8,8 @@
         var token: String
         var expiresAt: Date
         var projectID: String?
+        /// Dialecto's pull request page for the project, where Preview pull request goes.
+        var previewURL: URL? = nil
     }
 
     /// Somewhere that holds one secret per project.

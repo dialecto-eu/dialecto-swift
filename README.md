@@ -15,14 +15,14 @@ In Xcode: File → Add Package Dependencies, paste
 https://github.com/dialecto-eu/dialecto-swift
 ```
 
-choose "Up to Next Major Version" from `0.1.0`, and add `DialectoLive` to your app target. Add
+choose "Up to Next Major Version" from `0.2.0`, and add `DialectoLive` to your app target. Add
 `DialectoLiveEditing` too if you want live editing in debug builds (see below).
 
 Or in a `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/dialecto-eu/dialecto-swift", from: "0.1.0"),
+    .package(url: "https://github.com/dialecto-eu/dialecto-swift", from: "0.2.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -119,9 +119,10 @@ every launch; one the keys no longer trust, or one older than the build, is igno
 
 ## Live editing in debug builds
 
-`DialectoLiveEditing` is a second product for debug builds only. Sign in to Dialecto from the app, and the text
-you type in Dialecto's editor shows in the running app within a couple of seconds; click text in "Edit text"
-mode and Dialecto's editor opens on its key. Every source of the target is inside `#if DEBUG`; wrap the call too:
+`DialectoLiveEditing` is a second product for debug builds only. Sign in to Dialecto from the app, click text in
+"Edit text" mode, and a small Dialecto panel opens beside it: the text changes in the app as you type, and Save
+makes a Dialecto draft. Text you type in Dialecto's own editor shows in the running app within a couple of
+seconds too. Every source of the target is inside `#if DEBUG`; wrap the call too:
 
 ```swift
 import DialectoLiveEditing   // also inside #if DEBUG, or the import fails in a release build
@@ -150,9 +151,24 @@ no Keychain prompt appears. Xcode previews never sign in; they use a token alrea
   windows with an "Editing text · esc" badge, the pointer turns to a hand, and the text under it gets an
   outline with its key. On iOS the floating button turns sea and reads Editing text, and a frame goes round
   the screen.
-  A click on Dialecto's text opens Dialecto on that exact key, with its editor open on the source text; a key
-  the catalog doesn't have is said so in the panel; a click on other text adds a short note to the panel and
-  keeps the mode on. Esc, or the same control, turns it off.
+  On iOS a click on Dialecto's text opens Dialecto on that exact key in the browser. A key the catalog doesn't
+  have is said so in the panel; a click on other text adds a short note to the panel and keeps the mode on.
+  Esc, or the same control, turns it off.
+
+  On a Mac the click opens the **editor panel** beside the text, from the key's languages read while the
+  pointer hovered it. It shows the source language and the one the app shows, with the others folded under
+  one row. Each keystroke redraws the app through a local draft that only this run holds; ⌘S (or ⌘↩, or Save
+  draft) saves it as a Dialecto draft, and Esc or Cancel closes, asking first when text is unsaved. Text that
+  two keys share asks which first. A tooltip's key opens under a copy of the tooltip that Dialecto draws. The
+  panel is a non-activating child window of the window the text is in, so a sheet keeps its focus and the
+  panel moves with it. The server's refusals show in the panel: a placeholder to add back or take out under
+  the field, the current text with Use theirs and Keep mine after a conflict, a read-only panel when someone
+  else has a draft there, a line asking to sign in again for a token from before edit scopes, a wait, and a
+  Retry that keeps the typed text when Dialecto is unreachable.
+
+  With drafts, the frame's badge grows into the drafts count and **Preview pull request**, which opens the
+  keys window's New pull request step: each draft's before and after, per catalog and language. Open full
+  diff and Open pull request open Dialecto's preview page in the browser, where the pull request is made.
 
   On a Mac the frame goes round every window the app shows: sheets, alerts, popovers, panels, and windows
   opened while Edit text is on. A system tooltip is drawn by macOS outside the app's windows and vanishes on
@@ -178,6 +194,44 @@ Text shown through `Text(live:)`, `DialectoLive.string` and `NSLocalizedString` 
 the main bundle. SwiftUI literals (`Text("…")`, `Button("…")`, `TextField("…")`, `Menu("…")`, `.help("…")`,
 `String(localized:)`) never pass through the bundle: convert them to `Text(live:)` to edit them live. AppKit
 text read once through `NSLocalizedString` updates on its next read, not on a draft.
+
+### The server's endpoints
+
+All under `/api/live/native`, JSON, `Cache-Control: no-store`. Every one after sign-in takes
+`Authorization: Bearer <token>`; a 401 ends the session.
+
+| Endpoint | Meaning |
+|---|---|
+| `POST /device` `{repo, project?, scope?}` | Starts sign-in: `device_code`, `user_code`, `verification_uri`, `interval`. `scope` is `read` (the default) or `edit` |
+| `POST /token` `{device_code}` | The poll. 200 once approved: `access_token`, `project_id`, `scope` (as asked), `preview_url` |
+| `GET /drafts?hash=` | Your unmerged edits, long-polled |
+| `GET /entry?key=` | 200 or 404: whether the project has the key |
+| `GET /entries?key=` | Every language's text of the key, per catalog, with your drafts and `preview_url` |
+| `POST /edits` | Saves one language's text as your draft |
+
+`GET /entries` answers `{key, source_locale, locales, preview_url, catalogs: [{catalog, languages: [{locale,
+text, outdated, editable, draft: {text, state} | null, reason?}]}]}`: one catalog block for each catalog that holds
+the key (`app-localizable`, `app-infoplist`). A language that can't be saved here is `editable: false` with a
+`reason` (`plural`, `variation`, `not_translatable`, `no_permission`). An unknown key is 404 `{error: "not_found",
+reason}`.
+
+`POST /edits` takes `{catalog, key, locale, text, replaces}`, all strings without a NUL, where `replaces` is the text
+the person saw (required; `""` for an empty language). Someone else's pending change on the key is never taken over. It stages
+the text as an ordinary draft, with the Catalog editor's checks, the project's review setting (with Review off an
+owner's save is approved as it is saved) and its Fill mode. 200 answers `{draft: {catalog, key, locale, text} |
+null, state, hash}`: the same row the drafts feed holds, the review's state, and the feed's version after the save.
+`draft` is null when the text went back to the repo's. Refusals:
+
+- 403 `needs_edit_scope`: a token issued before edit scopes. Sign in again.
+- 403 `forbidden`: no edit access to that language.
+- 404 `not_found`: no such key or catalog.
+- 409 `conflict` with `current: {text}`: the text is no longer `replaces` (a scan or another person's draft changed it).
+- 409 `pending_by_other`: another person has an unmerged change on the key; take it over in the browser.
+- 422: `placeholders` (with `missing`, `extra`, each placeholder as the catalog writes it, such as `%1$@`), `not_editable` (with `reason`: a plural or locked key), `plural_forms`,
+  `read_only`, `unknown_locale`, `invalid_request`, `too_long`.
+- 429 `rate_limited`: 60 saves a minute per person and project; `entry` and `entries` share 120.
+
+The pull request stays in the browser: open `preview_url` (Dialecto's full-diff page for the project).
 
 ### Release builds
 
